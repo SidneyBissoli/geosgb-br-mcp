@@ -1,0 +1,151 @@
+"""
+MCP Server para dados geológicos do Serviço Geológico do Brasil (SGB).
+
+Este servidor expõe tools para consultar:
+- Ocorrências minerais
+- Busca específica de Elementos Terras Raras (ETRs)
+- Detalhes de ocorrências
+- Lista de substâncias minerais
+"""
+
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("geosgb")
+
+
+@mcp.tool()
+async def search_mineral_occurrences(
+    substance: str | None = None,
+    uf: str | None = None,
+    municipality: str | None = None,
+    economic_status: str | None = None,
+    bbox_xmin: float | None = None,
+    bbox_ymin: float | None = None,
+    bbox_xmax: float | None = None,
+    bbox_ymax: float | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> dict:
+    """
+    Busca ocorrências minerais no banco de dados do Serviço Geológico do Brasil.
+
+    Permite filtrar por substância mineral, estado (UF), município, status econômico
+    e/ou área geográfica (bounding box).
+
+    Args:
+        substance: Nome da substância mineral (ex: "Ouro", "Terras raras", "Litio", "Niobio")
+        uf: Sigla do estado brasileiro (ex: "MG", "GO", "BA", "AM")
+        municipality: Nome do município
+        economic_status: Status econômico da ocorrência ("Mina", "Garimpo", "Ocorrencia", "Indeterminado")
+        bbox_xmin: Longitude mínima do bounding box (WGS84)
+        bbox_ymin: Latitude mínima do bounding box (WGS84)
+        bbox_xmax: Longitude máxima do bounding box (WGS84)
+        bbox_ymax: Latitude máxima do bounding box (WGS84)
+        limit: Número máximo de resultados (default: 100, máximo: 1000)
+        offset: Offset para paginação
+
+    Returns:
+        Dicionário contendo:
+        - count: número de resultados retornados
+        - total_count: total de registros que atendem aos critérios
+        - features: lista de ocorrências minerais com detalhes
+    """
+    from .tools.occurrences import search_mineral_occurrences as _search
+
+    bbox = None
+    if all(v is not None for v in [bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax]):
+        bbox = (bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax)
+
+    return await _search(
+        substance=substance,
+        uf=uf,
+        municipality=municipality,
+        economic_status=economic_status,
+        bbox=bbox,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@mcp.tool()
+async def search_rare_earth_occurrences(
+    uf: str | None = None,
+    bbox_xmin: float | None = None,
+    bbox_ymin: float | None = None,
+    bbox_xmax: float | None = None,
+    bbox_ymax: float | None = None,
+    include_related_rocks: bool = True,
+    limit: int = 100,
+) -> dict:
+    """
+    Busca ocorrências de Elementos Terras Raras (ETRs) no Brasil.
+
+    ETRs são 17 elementos químicos estratégicos para tecnologias de transição
+    energética, incluindo lantanídeos, escândio e ítrio.
+
+    Args:
+        uf: Sigla do estado (ex: "MG", "GO", "BA")
+        bbox_xmin: Longitude mínima
+        bbox_ymin: Latitude mínima
+        bbox_xmax: Longitude máxima
+        bbox_ymax: Latitude máxima
+        include_related_rocks: Se True, inclui ocorrências em carbonatitos e
+                               rochas alcalinas (hospedeiras típicas de ETRs)
+        limit: Número máximo de resultados
+
+    Returns:
+        Dicionário com ocorrências de ETRs e termos de busca utilizados
+    """
+    from .tools.occurrences import search_rare_earth_occurrences as _search
+
+    bbox = None
+    if all(v is not None for v in [bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax]):
+        bbox = (bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax)
+
+    return await _search(
+        uf=uf,
+        bbox=bbox,
+        include_related_rocks=include_related_rocks,
+        limit=limit,
+    )
+
+
+@mcp.tool()
+async def get_occurrence_details(occurrence_id: int) -> dict:
+    """
+    Obtém detalhes completos de uma ocorrência mineral específica pelo ID.
+
+    Args:
+        occurrence_id: ID da ocorrência mineral
+
+    Returns:
+        Detalhes completos da ocorrência incluindo:
+        - Substâncias minerais
+        - Status econômico
+        - Rochas hospedeiras e encaixantes
+        - Tipologia e província mineral
+        - Localização (UF, município, coordenadas)
+        - Projeto de mapeamento
+    """
+    from .tools.occurrences import get_occurrence_details as _get_details
+
+    return await _get_details(occurrence_id)
+
+
+@mcp.tool()
+async def list_mineral_substances() -> dict:
+    """
+    Lista todas as substâncias minerais cadastradas no banco de dados do SGB.
+
+    Útil para descobrir quais minerais estão disponíveis para consulta.
+
+    Returns:
+        Lista de substâncias minerais únicas ordenadas alfabeticamente
+    """
+    from .tools.occurrences import list_mineral_substances as _list_substances
+
+    return await _list_substances()
+
+
+if __name__ == "__main__":
+    mcp.run()
