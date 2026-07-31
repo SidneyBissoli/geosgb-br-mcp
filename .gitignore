@@ -46,3 +46,17 @@ debug_*.py
 # OS
 .DS_Store
 Thumbs.db
+
+# artefatos renderizados
+*.html
+
+# artefatos R
+.Rhistory
+
+# conflitos de sincronizacao do OneDrive
+_ul
+_ul-*
+*-Sidney-desktop*
+
+# diretorio espurio (variavel nao expandida)
+%APPDATA%/
