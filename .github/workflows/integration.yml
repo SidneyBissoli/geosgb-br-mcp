@@ -1,0 +1,38 @@
+name: Integration tests (live GeoSGB portal)
+
+# Contrato dos endpoints ArcGIS hardcoded (tests/test_endpoints_contract.py):
+# cada caminho de ENDPOINTS precisa existir e ser a camada que o nome promete.
+# Na ativação (2026-08-23), 2 dos 5 já estavam quebrados na fonte
+# (litoestratigrafia_estados sem FeatureServer; sedimento_corrente com página
+# de erro) — o workflow FALHA de propósito até o cliente migrar, e a falha
+# vira pendência no painel do portfolio-monitor (workflow_watch).
+
+on:
+  # segunda 08:00 UTC = 05:00 BRT, antes da rodada semanal do monitor (09:00 BRT)
+  schedule:
+    - cron: '0 8 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install package + pytest
+        run: pip install -e . pytest
+
+      - name: Endpoints contract against live GeoSGB
+        env:
+          INTEGRATION_TESTS: '1'
+        run: pytest tests/test_endpoints_contract.py -v
