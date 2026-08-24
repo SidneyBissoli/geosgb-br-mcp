@@ -4,19 +4,19 @@ import asyncio
 import httpx
 from typing import Any
 
+from .constants import BASE_URL as _BASE_URL, ENDPOINTS as _ENDPOINTS
+
 
 class GeoSGBClient:
-    """Cliente para ArcGIS REST API do SGB."""
+    """Cliente para ArcGIS REST API do SGB.
 
-    BASE_URL = "https://geoportal.sgb.gov.br/server/rest/services"
+    BASE_URL e ENDPOINTS vivem em constants.py (fonte única da verdade);
+    aqui são apenas aliases de classe para conveniência dos chamadores.
+    """
 
-    ENDPOINTS = {
-        "ocorrencias": "/geologia/ocorrencias/MapServer/0",
-        "afloramentos": "/geologia/afloramentos/MapServer/0",
-        "litoestratigrafia_estados": "/geologia/litoestratigrafia_estados/FeatureServer",
-        "litoestratigrafia_1m": "/geologia/litoestratigrafia_1000000/MapServer/0",
-        "sedimento_corrente": "/sedimento_corrente_query_all/FeatureServer/0",
-    }
+    BASE_URL = _BASE_URL
+
+    ENDPOINTS = _ENDPOINTS
 
     def __init__(self, timeout: float = 60.0, max_retries: int = 3, retry_delay: float = 2.0):
         """
@@ -109,6 +109,10 @@ class GeoSGBClient:
         Note:
             A API do SGB não suporta paginação (resultOffset/resultRecordCount).
             O limite de registros é aplicado no lado do cliente.
+
+            A chave "litoestratigrafia_estados" aponta para a RAIZ do serviço
+            (uma camada por estado, ids instáveis) e NÃO pode ser usada aqui
+            diretamente — resolva a camada via ?f=json antes (ver constants.py).
         """
         endpoint = self.ENDPOINTS.get(endpoint_key)
         if not endpoint:

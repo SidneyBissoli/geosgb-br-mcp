@@ -16,9 +16,12 @@ class GeoSGBClient:
     ENDPOINTS = {
         "ocorrencias": "/geologia/ocorrencias/MapServer/0",
         "afloramentos": "/geologia/afloramentos/MapServer/0",
-        "litoestratigrafia_estados": "/geologia/litoestratigrafia_estados/FeatureServer",
+        # raiz do serviço: uma camada POR ESTADO, resolver id via ?f=json
+        "litoestratigrafia_estados": "/geologia/litoestratigrafia_estados/MapServer",
         "litoestratigrafia_1m": "/geologia/litoestratigrafia_1000000/MapServer/0",
-        "sedimento_corrente": "/sedimento_corrente_query_all/FeatureServer/0",
+        # 2026-08: sedimento_corrente_query_all morreu na fonte; camada 2 do
+        # serviço integrado de geoquímica ("Sedimento de Corrente")
+        "sedimento_corrente": "/geoquimica/geoquimica_integrada/MapServer/2",
     }
     
     def __init__(self, timeout: float = 30.0):

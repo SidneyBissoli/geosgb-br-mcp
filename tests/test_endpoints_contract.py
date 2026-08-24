@@ -10,8 +10,12 @@ hardcoded envelhece em silêncio. Na ativação deste contrato (2026-08-23):
     homônimo segue no diretório — o cliente precisa migrar;
   - sedimento_corrente_query_all: respondendo página de erro HTML e
     pendurando conexões.
-Enquanto os dois não forem corrigidos no cliente, este teste FALHA de
-propósito — a falha do workflow vira pendência no painel do portfólio.
+RESOLVIDO em 2026-08-23 (mesmo dia, à noite): litoestratigrafia_estados
+migrado para a raiz do MapServer homônimo (uma camada POR ESTADO, ids
+instáveis — o contrato valida a serviceDescription); sedimento_corrente
+migrado para /geoquimica/geoquimica_integrada/MapServer/2 ("Sedimento de
+Corrente", 151k pontos) — o serviço query_all morreu de vez (pendura em
+todos os níveis, embora ainda listado na raiz do diretório).
 
 Roda só com INTEGRATION_TESTS=1 (o resto da suíte já é live, mas este é o
 único com propósito de vigília; cron semanal em .github/workflows/integration.yml).
@@ -62,9 +66,12 @@ def test_todo_endpoint_tem_expectativa():
 def test_endpoint_existe_e_e_o_que_promete(key: str, path: str):
     meta = _layer_metadata(path)
     assert "error" not in meta, f"{key} ({path}): o geoportal respondeu erro {meta['error']}"
-    nome = str(meta.get("name", "")).lower()
+    # Camada tem "name"; raiz de serviço (caso litoestratigrafia_estados) não —
+    # lá a identidade está na serviceDescription.
+    nome = str(meta.get("name") or meta.get("serviceDescription") or "").lower()
     termo = EXPECTED_NAME_TERM.get(key, key)
     assert termo in nome, (
-        f"{key}: a camada em {path} chama-se '{meta.get('name')}' — "
+        f"{key}: o recurso em {path} identifica-se como "
+        f"'{(meta.get('name') or meta.get('serviceDescription') or '')[:120]}' — "
         f"não contém '{termo}'; endpoint trocado ou reorganizado?"
     )
