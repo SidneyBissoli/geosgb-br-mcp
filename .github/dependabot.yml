@@ -1,0 +1,24 @@
+# Dependabot só para GitHub Actions. O pyproject declara dependências com piso
+# aberto (>=), que qualquer versão nova satisfaz — um bloco "pip" não teria o
+# que atualizar e viraria ruído. Actions AGRUPADAS INCLUINDO MAJOR, de
+# propósito: action de CI é infraestrutura de teste e o próprio CI é o teste
+# dela — major que quebra reprova no PR (mesma convenção dos demais MCPs).
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+          - "minor"
+          - "patch"
+    labels:
+      - "dependencies"
+      - "github-actions"
