@@ -47,6 +47,11 @@ debug_*.py
 .DS_Store
 Thumbs.db
 
+# convencao dos irmaos (ibge-br-mcp, ilo-mcp-server, uis-mcp-server): o roadmap
+# de desenvolvimento fica fora do repositorio publico; a copia versionada vive em
+# portfolio-monitor/roadmaps-fonte/ (sync_roadmaps.R)
+ROADMAP.md
+
 # artefatos renderizados
 *.html
 

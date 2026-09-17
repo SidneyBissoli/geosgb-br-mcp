@@ -389,3 +389,26 @@ async def test_chave_desconhecida_nos_argumentos_e_recusada(portal):
     assert resultado.is_error
     assert "estado" in resultado.content[0].text
     assert "Extra inputs are not permitted" in resultado.content[0].text
+
+
+async def test_limite_de_resultados_e_imposto(portal):
+    """A docstring prometia "máximo: 1000" e nada impunha (até 2026-09-17):
+    limit=5000 passava e a API, que não pagina, devolvia tudo. Agora o
+    inputSchema anuncia o teto e a chamada acima dele reprova."""
+    portal(CHEIO)
+    async with conectar() as cliente:
+        tools = {t.name: t for t in (await cliente.list_tools()).tools}
+        for nome in ("search_mineral_occurrences", "search_rare_earth_occurrences"):
+            limite = tools[nome].input_schema["properties"]["limit"]
+            assert (limite.get("minimum"), limite.get("maximum")) == (1, 1000), nome
+        offset = tools["search_mineral_occurrences"].input_schema["properties"]["offset"]
+        assert offset.get("minimum") == 0
+
+        acima = await cliente.call_tool("search_mineral_occurrences", {"limit": 1001})
+        assert acima.is_error and "1000" in acima.content[0].text
+        zero = await cliente.call_tool("search_rare_earth_occurrences", {"limit": 0})
+        assert zero.is_error and "greater than or equal to 1" in zero.content[0].text
+        negativo = await cliente.call_tool("search_mineral_occurrences", {"offset": -1})
+        assert negativo.is_error
+        no_teto = await cliente.call_tool("search_mineral_occurrences", {"limit": 1000})
+        assert not no_teto.is_error
