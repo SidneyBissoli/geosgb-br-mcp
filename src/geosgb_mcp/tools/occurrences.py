@@ -80,10 +80,13 @@ async def search_mineral_occurrences(
                 "uf": attrs.get("UF"),
                 "municipality": attrs.get("MUNICIPIO"),
                 "project": attrs.get("PROJETO"),
+                # Chave sempre presente (None sem geometria): o contrato de
+                # saída (models.OccurrenceSummary) a declara obrigatória e
+                # anulável, como as outras duas buscas já faziam.
+                "coordinates": {"lon": geom.get("x"), "lat": geom.get("y")}
+                if include_geometry and geom
+                else None,
             }
-
-            if include_geometry and geom:
-                occurrence["coordinates"] = {"lon": geom.get("x"), "lat": geom.get("y")}
 
             occurrences.append(occurrence)
 
@@ -203,6 +206,13 @@ async def get_occurrence_details(occurrence_id: int) -> dict:
 
     Returns:
         Detalhes completos da ocorrência
+
+    Raises:
+        LookupError: se não existe ocorrência com esse ID. Até 2026-09 a
+            função devolvia `{"error": ...}` com status de sucesso; com o
+            contrato de saída (models.OccurrenceDetails) esse dict seria
+            reprovado pelo próprio SDK, então o erro é levantado — o FastMCP
+            o converte em resposta `isError` com a mensagem.
     """
     client = GeoSGBClient()
 
@@ -216,7 +226,7 @@ async def get_occurrence_details(occurrence_id: int) -> dict:
 
         features = result.get("features", [])
         if not features:
-            return {"error": f"Ocorrência {occurrence_id} não encontrada"}
+            raise LookupError(f"Ocorrência {occurrence_id} não encontrada")
 
         feature = features[0]
         attrs = feature.get("attributes", {})

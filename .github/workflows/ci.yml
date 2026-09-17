@@ -1,0 +1,42 @@
+name: CI
+
+# Gate de push/PR: a suíte OFFLINE (modelos + contrato de saída em
+# tests/test_output_contract.py, com fonte falsa). As suítes que batem no
+# geoportal vivo ficam atrás de INTEGRATION_TESTS=1 (tests/conftest.py) e
+# rodam no cron semanal de integration.yml — vigília, não gate.
+#
+# Até 2026-09-17 este repositório NÃO tinha CI em push: só o cron semanal, que
+# nunca importa o servidor. Foi assim que `mcp>=1.0.0` sem teto passou a
+# resolver 2.x e o import de `mcp.server.fastmcp` quebrou sem ninguém ver.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Piso do requires-python e a linha corrente: a promessa do pyproject só
+    # vale se um job a exercita.
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package + dev deps
+        run: pip install -e .[dev]
+
+      # Fumaça do import: é o que o cron semanal nunca fez.
+      - name: Server imports and lists 4 tools
+        run: |
+          python -c "from geosgb_mcp.server import mcp; n=len(mcp._tool_manager.list_tools()); assert n == 4, n; print(n, 'tools')"
+
+      - name: Offline suite (models + output contract)
+        run: pytest -v
