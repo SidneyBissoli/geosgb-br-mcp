@@ -1,8 +1,25 @@
-"""Tools para busca de ocorrências minerais."""
+"""Tools para busca de ocorrências minerais.
+
+Custo da fonte (Sessão 2 do roadmap, 2026-09-17): o geoportal não pagina —
+toda query traz TUDO que casa com a WHERE. Por isso (a) as buscas pedem só
+os campos que devolvem (`outFields` explícito, constants.OCCURRENCE_FIELDS),
+(b) não há requisição de contagem antes da query (`count == len(features)`,
+medido em 4 de 4 WHERE na Sessão 1) e (c) a lista de substâncias, que só
+existe baixando a camada inteira, fica num cache em processo com TTL.
+"""
+
+import asyncio
+import time
 
 from ..client import GeoSGBClient
-from ..constants import REE_HOST_ROCKS, REE_SEARCH_TERMS
-from ..provenance import build_provenance
+from ..constants import (
+    OCCURRENCE_FIELDS,
+    RARE_EARTH_FIELDS,
+    REE_HOST_ROCKS,
+    REE_SEARCH_TERMS,
+    SUBSTANCES_CACHE_TTL,
+)
+from ..provenance import build_provenance, now_utc_iso
 
 
 async def search_mineral_occurrences(
@@ -24,7 +41,8 @@ async def search_mineral_occurrences(
         municipality: Nome do município
         economic_status: Status econômico ("Mina", "Garimpo", "Indeterminado",
             "Não explotado" — os valores da fonte em 2026-09-17)
-        bbox: Bounding box (xmin, ymin, xmax, ymax) em WGS84
+        bbox: Bounding box (xmin, ymin, xmax, ymax) em WGS84, já validado
+            pela borda (server.py)
         limit: Máximo de resultados (default: 100)
         offset: Offset para paginação (aplicado no cliente)
         include_geometry: Incluir coordenadas na resposta
@@ -54,11 +72,12 @@ async def search_mineral_occurrences(
     client = GeoSGBClient()
 
     try:
-        total_count = await client.get_count("ocorrencias", where_clause)
-
+        # Uma ida só: até 2026-09-17 havia um `returnCountOnly` antes desta
+        # query, e a fonte, que não pagina, devolvia na query o mesmo total.
         result = await client.query(
             endpoint_key="ocorrencias",
             where=where_clause,
+            out_fields=",".join(OCCURRENCE_FIELDS),
             return_geometry=include_geometry,
             geometry=bbox,
         )
@@ -66,6 +85,7 @@ async def search_mineral_occurrences(
         provenance = build_provenance(where_clause, bbox)
 
         features = result.get("features", [])
+        total_count = len(features)
 
         # Aplicar offset e limit no cliente (API não suporta paginação)
         features = features[offset : offset + limit]
@@ -80,7 +100,6 @@ async def search_mineral_occurrences(
                 "substance": attrs.get("SUBSTANCIAS"),
                 "economic_status": attrs.get("STATUS_ECONOMICO"),
                 "host_rocks": attrs.get("ROCHAS_HOSPEDEIRAS"),
-                "typology": attrs.get("TIPOLOGIA"),
                 "province": attrs.get("PROVINCIA"),
                 "uf": attrs.get("UF"),
                 "municipality": attrs.get("MUNICIPIO"),
@@ -111,7 +130,7 @@ async def search_mineral_occurrences(
 async def search_rare_earth_occurrences(
     uf: str | None = None,
     bbox: tuple[float, float, float, float] | None = None,
-    include_related_rocks: bool = True,
+    include_related_rocks: bool = False,
     limit: int = 100,
 ) -> dict:
     """
@@ -119,9 +138,11 @@ async def search_rare_earth_occurrences(
 
     Args:
         uf: Sigla do estado
-        bbox: Bounding box
+        bbox: Bounding box, já validado pela borda (server.py)
         include_related_rocks: Se True, inclui ocorrências em rochas
-                               típicas de ETRs (carbonatitos, alcalinas)
+            hospedeiras típicas de ETRs (constants.REE_HOST_ROCKS). Default
+            False desde 2026-09-17: com True, 96% do resultado são pegmatitos
+            (2.383 registros contra 74 só por substância).
         limit: Máximo de resultados
 
     Returns:
@@ -151,16 +172,16 @@ async def search_rare_earth_occurrences(
     client = GeoSGBClient()
 
     try:
-        total_count = await client.get_count("ocorrencias", where_clause)
-
         result = await client.query(
             endpoint_key="ocorrencias",
             where=where_clause,
+            out_fields=",".join(RARE_EARTH_FIELDS),
             geometry=bbox,
         )
         provenance = build_provenance(where_clause, bbox)
 
         features = result.get("features", [])
+        total_count = len(features)
 
         # Aplicar limit no cliente
         features = features[:limit]
@@ -245,7 +266,6 @@ async def get_occurrence_details(occurrence_id: int) -> dict:
             "economic_status": attrs.get("STATUS_ECONOMICO"),
             "host_rocks": attrs.get("ROCHAS_HOSPEDEIRAS"),
             "enclosing_rocks": attrs.get("ROCHAS_ENCAIXANTES"),
-            "typology": attrs.get("TIPOLOGIA"),
             "province": attrs.get("PROVINCIA"),
             "utilitarian_class": attrs.get("CLASSES_UTILITARIAS"),
             "uf": attrs.get("UF"),
@@ -265,15 +285,43 @@ async def get_occurrence_details(occurrence_id: int) -> dict:
         await client.close()
 
 
-async def list_mineral_substances() -> dict:
-    """
-    Lista todas as substâncias minerais cadastradas no banco de dados do SGB.
+class SubstancesCache:
+    """Cache em processo da lista de substâncias (uma entrada, com validade).
 
-    Returns:
-        Lista de substâncias minerais únicas
+    Guarda a lista deduplicada e o instante da ida ao portal que a produziu:
+    a resposta servida do cache repete esse `retrieved_at` e marca
+    `served_from_cache=True` no bloco de proveniência. `clock` é injetável
+    (o gate vence o TTL sem esperar um dia).
     """
+
+    def __init__(self, ttl: float):
+        self.ttl = ttl
+        self.clock = time.monotonic
+        self.substances: list[str] | None = None
+        self.retrieved_at: str | None = None
+        self._expires_at = 0.0
+        self.lock = asyncio.Lock()
+
+    def valid(self) -> bool:
+        return self.substances is not None and self.clock() < self._expires_at
+
+    def store(self, substances: list[str], retrieved_at: str) -> None:
+        self.substances = substances
+        self.retrieved_at = retrieved_at
+        self._expires_at = self.clock() + self.ttl
+
+    def clear(self) -> None:
+        self.substances = None
+        self.retrieved_at = None
+        self._expires_at = 0.0
+
+
+_substances_cache = SubstancesCache(SUBSTANCES_CACHE_TTL)
+
+
+async def _fetch_substances() -> tuple[list[str], str]:
+    """Baixa a camada inteira (só SUBSTANCIAS, sem geometria) e deduplica."""
     client = GeoSGBClient()
-
     try:
         result = await client.query(
             endpoint_key="ocorrencias",
@@ -281,21 +329,46 @@ async def list_mineral_substances() -> dict:
             out_fields="SUBSTANCIAS",
             return_geometry=False,
         )
-        provenance = build_provenance("1=1")
-
-        substances = set()
-        for feature in result.get("features", []):
-            subst = feature.get("attributes", {}).get("SUBSTANCIAS")
-            if subst:
-                for s in subst.split(","):
-                    substances.add(s.strip())
-
-        return {
-            "count": len(substances),
-            "substances": sorted(list(substances)),
-            "provenance": provenance,
-            "attribution": [provenance["source_url"]],
-        }
-
+        retrieved_at = now_utc_iso()
     finally:
         await client.close()
+
+    substances: set[str] = set()
+    for feature in result.get("features", []):
+        subst = feature.get("attributes", {}).get("SUBSTANCIAS")
+        if subst:
+            for s in subst.split(","):
+                if s.strip():
+                    substances.add(s.strip())
+    return sorted(substances), retrieved_at
+
+
+async def list_mineral_substances() -> dict:
+    """
+    Lista todas as substâncias minerais cadastradas no banco de dados do SGB.
+
+    A primeira chamada do processo baixa a camada inteira (~20 s em
+    2026-09-17); as seguintes, dentro de constants.SUBSTANCES_CACHE_TTL,
+    saem do cache em processo (< 50 ms) com `served_from_cache=True` e o
+    `retrieved_at` da ida original. O lock evita duas chamadas simultâneas
+    pagarem os 20 s em dobro.
+
+    Returns:
+        Lista de substâncias minerais únicas
+    """
+    cache = _substances_cache
+    async with cache.lock:
+        served_from_cache = cache.valid()
+        if not served_from_cache:
+            substances, retrieved_at = await _fetch_substances()
+            cache.store(substances, retrieved_at)
+
+    provenance = build_provenance(
+        "1=1", retrieved_at=cache.retrieved_at, served_from_cache=served_from_cache
+    )
+    return {
+        "count": len(cache.substances),
+        "substances": list(cache.substances),
+        "provenance": provenance,
+        "attribution": [provenance["source_url"]],
+    }

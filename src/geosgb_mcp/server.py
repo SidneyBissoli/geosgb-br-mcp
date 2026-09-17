@@ -33,12 +33,13 @@ INSTRUCTIONS = (
     "Qual tool para qual pergunta: search_mineral_occurrences filtra por substância, "
     "UF, município, status econômico e/ou retângulo geográfico (bbox em WGS84); "
     "search_rare_earth_occurrences é a busca pronta de terras raras (ETR) por "
-    "termos de substância e, com include_related_rocks (default True), também por "
-    "rochas hospedeiras típicas — atenção: os pegmatitos são a maior parte desse "
-    "resultado; use include_related_rocks=False para só as substâncias; "
+    "termos de substância (default; 74 registros em 2026-09-17) e, com "
+    "include_related_rocks=True, também por rochas hospedeiras típicas — atenção: "
+    "esse modo traz 2.383 registros e 96% deles são pegmatitos, não ETR; "
     "get_occurrence_details traz o registro completo de UMA ocorrência pelo id; "
     "list_mineral_substances lista os nomes de substância exatamente como a fonte "
-    "os grava (baixa a camada inteira: ~18 s). "
+    "os grava (a primeira chamada baixa a camada inteira, ~20 s; as seguintes "
+    "saem de um cache válido por 24 h, e provenance.served_from_cache diz qual foi). "
     "Como preencher: uf é a sigla em MAIÚSCULAS (\"MG\", não \"mg\" nem \"Minas\"); "
     "economic_status aceita exatamente \"Mina\", \"Garimpo\", \"Indeterminado\" ou "
     "\"Não explotado\" (valores medidos na fonte em 2026-09-17; não existe "
@@ -46,8 +47,11 @@ INSTRUCTIONS = (
     "acento — use a grafia da fonte (\"Nióbio\", não \"Niobio\"; "
     "\"Terras raras\"), que list_mineral_substances devolve. "
     "Custo: o portal não pagina, então toda busca baixa tudo o que casa e corta "
-    "no cliente — uma UF inteira leva ~11 s; filtre por substância ou bbox quando "
-    "puder. Toda resposta traz um bloco provenance (URL da camada, WHERE efetiva, "
+    "no cliente — uma UF inteira (MG, 7.562 registros) leva ~4 s; filtre por "
+    "substância ou bbox quando puder. O bbox exige os quatro cantos "
+    "(bbox_xmin < bbox_xmax, bbox_ymin < bbox_ymax, em graus WGS84) ou nenhum; "
+    "incompleto ou invertido é recusado antes de ir à fonte. "
+    "Toda resposta traz um bloco provenance (URL da camada, WHERE efetiva, "
     "instante da extração em UTC); ao citar, use \"Fonte: Serviço Geológico do "
     "Brasil (SGB/CPRM) — GeoSGB\". "
     "Não use este servidor para afloramentos, litoestratigrafia ou geoquímica "
@@ -63,6 +67,48 @@ mcp = MCPServer("geosgb", instructions=INSTRUCTIONS)
 # `structuredContent` em tools/call e reprova em runtime resposta que não
 # obedece (vira `isError`). Retorno `-> dict` não gera esquema nenhum — foi
 # assim até 2026-09. Gate: tests/test_output_contract.py.
+
+
+def _bbox(
+    xmin: float | None, ymin: float | None, xmax: float | None, ymax: float | None
+) -> tuple[float, float, float, float] | None:
+    """Os quatro cantos viram um envelope — ou nenhum vira "sem bbox".
+
+    Até 2026-09-17 os cantos eram aceitos soltos: três preenchidos e um
+    vazio viravam "sem bbox" em silêncio (a busca ignorava a área e devolvia
+    a UF inteira como se fosse resposta) e `xmin > xmax` ia ao portal. Agora
+    a recusa é na borda, com o que faltou ou o que está invertido, antes de
+    qualquer ida à fonte.
+    """
+    cantos = {"bbox_xmin": xmin, "bbox_ymin": ymin, "bbox_xmax": xmax, "bbox_ymax": ymax}
+    faltam = [nome for nome, valor in cantos.items() if valor is None]
+    if len(faltam) == 4:
+        return None
+    if faltam:
+        raise ToolError(
+            f"bbox incompleto: faltou {', '.join(faltam)} — informe os quatro cantos "
+            "(bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax) ou nenhum"
+        )
+    assert xmin is not None and ymin is not None and xmax is not None and ymax is not None
+    fora = [
+        f"{nome}={valor}"
+        for nome, valor, teto in (
+            ("bbox_xmin", xmin, 180), ("bbox_xmax", xmax, 180),
+            ("bbox_ymin", ymin, 90), ("bbox_ymax", ymax, 90),
+        )
+        if not -teto <= valor <= teto
+    ]
+    if fora:
+        raise ToolError(
+            f"bbox fora do globo: {', '.join(fora)} — longitude em [-180, 180] e "
+            "latitude em [-90, 90], graus WGS84"
+        )
+    if xmin >= xmax or ymin >= ymax:
+        raise ToolError(
+            f"bbox invertido ou vazio: bbox_xmin ({xmin}) deve ser menor que bbox_xmax "
+            f"({xmax}) e bbox_ymin ({ymin}) menor que bbox_ymax ({ymax})"
+        )
+    return (xmin, ymin, xmax, ymax)
 
 
 @mcp.tool()
@@ -97,7 +143,8 @@ async def search_mineral_occurrences(
         economic_status: Status econômico, exatamente como a fonte grava: "Mina",
             "Garimpo", "Indeterminado" ou "Não explotado" (medido em 2026-09-17;
             não existe "Ocorrência")
-        bbox_xmin: Longitude mínima do bounding box (WGS84)
+        bbox_xmin: Longitude mínima do bounding box (WGS84). Os quatro cantos
+            vêm juntos ou nenhum; incompleto ou invertido é recusado.
         bbox_ymin: Latitude mínima do bounding box (WGS84)
         bbox_xmax: Longitude máxima do bounding box (WGS84)
         bbox_ymax: Latitude máxima do bounding box (WGS84)
@@ -109,12 +156,13 @@ async def search_mineral_occurrences(
         - count: número de resultados retornados
         - total_count: total de registros que atendem aos critérios
         - features: lista de ocorrências minerais com detalhes
+
+    Custo: a fonte não pagina — a busca baixa tudo que casa (só os campos da
+    resposta, mais coordenadas) e corta no cliente; uma UF inteira leva ~4 s.
     """
     from .tools.occurrences import search_mineral_occurrences as _search
 
-    bbox = None
-    if all(v is not None for v in [bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax]):
-        bbox = (bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax)
+    bbox = _bbox(bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax)
 
     return await _search(
         substance=substance,
@@ -134,7 +182,9 @@ async def search_rare_earth_occurrences(
     bbox_ymin: float | None = None,
     bbox_xmax: float | None = None,
     bbox_ymax: float | None = None,
-    include_related_rocks: bool = True,
+    # Default False desde 2026-09-17 (Sessão 2): com True, 96% do resultado
+    # são pegmatitos (2.291 de 2.383), não ETR. Era True até então.
+    include_related_rocks: bool = False,
     limit: Annotated[int, Field(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
 ) -> RareEarthSearchResult:
     """
@@ -143,14 +193,24 @@ async def search_rare_earth_occurrences(
     ETRs são 17 elementos químicos estratégicos para tecnologias de transição
     energética, incluindo lantanídeos, escândio e ítrio.
 
+    Dois modos, medidos na fonte em 2026-09-17 (Brasil inteiro):
+    - include_related_rocks=False (default): só por substância (13 termos —
+      "Terras raras", "Cério", "Lantânio", "Monazita"...): 74 registros,
+      60 KB, ~1,5 s.
+    - include_related_rocks=True: soma as ocorrências cuja rocha hospedeira é
+      típica de ETR (carbonatito, nefelina sienito, pegmatito...): 2.383
+      registros, 2,7 MB, ~5,5 s — e 2.291 deles (96%) são pegmatitos, que
+      hospedam de tudo; use quando o alvo for a rocha, não o elemento.
+
     Args:
         uf: Sigla da unidade da federação, em maiúsculas (ex: "MG", "GO", "BA")
-        bbox_xmin: Longitude mínima
+        bbox_xmin: Longitude mínima (os quatro cantos vêm juntos ou nenhum;
+            incompleto ou invertido é recusado)
         bbox_ymin: Latitude mínima
         bbox_xmax: Longitude máxima
         bbox_ymax: Latitude máxima
-        include_related_rocks: Se True, inclui ocorrências em carbonatitos e
-                               rochas alcalinas (hospedeiras típicas de ETRs)
+        include_related_rocks: Se True, inclui ocorrências em rochas
+            hospedeiras típicas de ETRs (ver os dois modos acima)
         limit: Número máximo de resultados
 
     Returns:
@@ -158,9 +218,7 @@ async def search_rare_earth_occurrences(
     """
     from .tools.occurrences import search_rare_earth_occurrences as _search
 
-    bbox = None
-    if all(v is not None for v in [bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax]):
-        bbox = (bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax)
+    bbox = _bbox(bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax)
 
     return await _search(
         uf=uf,
@@ -183,7 +241,7 @@ async def get_occurrence_details(occurrence_id: int) -> OccurrenceDetails:
         - Substâncias minerais
         - Status econômico
         - Rochas hospedeiras e encaixantes
-        - Tipologia e província mineral
+        - Província mineral e classe utilitária
         - Localização (UF, município, coordenadas)
         - Projeto de mapeamento
     """
@@ -203,7 +261,13 @@ async def list_mineral_substances() -> SubstanceList:
     """
     Lista todas as substâncias minerais cadastradas no banco de dados do SGB.
 
-    Útil para descobrir quais minerais estão disponíveis para consulta.
+    Útil para descobrir quais minerais estão disponíveis para consulta — e a
+    grafia exata que `substance` em search_mineral_occurrences exige.
+
+    Custo: a fonte não agrega este campo, então a primeira chamada do processo
+    baixa a camada inteira (~20 s em 2026-09-17); as seguintes, por 24 h, saem
+    de um cache em processo (< 50 ms). `provenance.served_from_cache` diz qual
+    foi e `provenance.retrieved_at` é sempre o instante da ida real à fonte.
 
     Returns:
         Lista de substâncias minerais únicas ordenadas alfabeticamente

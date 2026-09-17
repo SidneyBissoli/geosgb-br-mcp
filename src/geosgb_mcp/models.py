@@ -93,7 +93,8 @@ class OccurrenceSummary(BaseModel):
     substance: Optional[str]
     economic_status: Optional[str]
     host_rocks: Optional[str]
-    typology: Optional[str]
+    # Até 2026-09-17 havia `typology` aqui: a camada não tem o campo
+    # TIPOLOGIA (37 campos lidos na fonte), saía sempre nulo.
     province: Optional[str]
     uf: Optional[str]
     municipality: Optional[str]
@@ -146,7 +147,6 @@ class OccurrenceDetails(BaseModel):
     economic_status: Optional[str]
     host_rocks: Optional[str]
     enclosing_rocks: Optional[str]
-    typology: Optional[str]
     province: Optional[str]
     utilitarian_class: Optional[str]
     uf: Optional[str]

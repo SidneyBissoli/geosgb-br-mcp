@@ -36,6 +36,40 @@ DEFAULT_TIMEOUT = 60.0
 DEFAULT_LIMIT = 100
 MAX_LIMIT = 1000
 
+# Campos que as buscas pedem à fonte (`outFields`) — só os que a resposta
+# usa. Até 2026-09-17 as duas buscas pediam `*` (37 campos) e a resposta
+# aproveitava 8: `UF = 'MG'` (7.562 registros) vinha em 8,0 MB / 10,6 s com
+# `*` + geometria e em 2,2 MB / 3,8 s com estes 8 + geometria (medido em
+# 2026-09-17; a geometria pesa pouco, os 29 campos sobrando é que pesavam).
+# A camada NÃO tem `TIPOLOGIA` (lista real de 37 campos lida em 2026-09-17):
+# pedi-lo dá 400 "Failed to execute query", e o campo `typology` que as tools
+# devolviam era sempre nulo — saiu do contrato. `get_occurrence_details`
+# segue com `*`: é um registro.
+OCCURRENCE_FIELDS = (
+    "ID_OCORRENCIA",
+    "SUBSTANCIAS",
+    "STATUS_ECONOMICO",
+    "ROCHAS_HOSPEDEIRAS",
+    "PROVINCIA",
+    "UF",
+    "MUNICIPIO",
+    "PROJETO",
+)
+# A busca de ETR não devolve `project`.
+RARE_EARTH_FIELDS = tuple(f for f in OCCURRENCE_FIELDS if f != "PROJETO")
+
+# Validade do cache em processo de `list_mineral_substances`, em segundos.
+# A lista nasce de baixar a camada inteira (36.484 registros só com
+# SUBSTANCIAS: 1,6 MB / ~20 s em 2026-09-17) porque a fonte recusa agregar
+# esse campo: `outStatistics` + `groupByFieldsForStatistics=SUBSTANCIAS`
+# responde 400 "Unable to complete operation" mesmo com `UF = 'AC'`, e
+# `returnDistinctValues` também 400 — o mesmo groupBy por `UF` ou
+# `STATUS_ECONOMICO` responde 200 em 0,1 s; é o campo multivalor ("Ouro,
+# Prata", texto 255) que o servidor não agrupa. A lista muda raramente
+# (cadastro do SGB, sem `lastEditDate` no serviço); um dia de validade
+# amortiza os 20 s em uma ida por processo por dia.
+SUBSTANCES_CACHE_TTL = 24 * 60 * 60
+
 # Termos de busca para ETRs — a ÚNICA lista que search_rare_earth_occurrences
 # usa (`SUBSTANCIAS LIKE '%termo%'`, um OR por termo). Até 2026-09-17 a tool
 # tinha uma lista própria de 5 termos "para evitar queries muito longas", sem
@@ -67,9 +101,11 @@ REE_SEARCH_TERMS = [
 # Rochas hospedeiras típicas de ETRs (`ROCHAS_HOSPEDEIRAS LIKE`), entram com
 # include_related_rocks=True. Achados por rocha em 2026-09-17: "Pegmatito"
 # 2.291, "Carbonatito" 20, "Nefelina sienito" 4, "Granito alcalino" 1,
-# "Sienito alcalino" e "Fonolito" zero. Atenção: "Pegmatito" sozinho é 96% do
-# resultado da tool com o default — a decisão sobre esse default é da Sessão 2
-# do roadmap, não daqui.
+# "Sienito alcalino" e "Fonolito" zero. "Pegmatito" sozinho é 96% do
+# resultado com as rochas (2.383 registros, 2,7 MB, 5,5 s, contra 74
+# registros, 60 KB, 1,5 s só por substância) — por isso, desde 2026-09-17
+# (Sessão 2), o default da tool é include_related_rocks=False: a busca por
+# rochas é opt-in e a descrição da tool diz o que cada modo traz.
 REE_HOST_ROCKS = [
     "Carbonatito",
     "Nefelina sienito",
