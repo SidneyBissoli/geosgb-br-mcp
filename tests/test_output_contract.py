@@ -19,8 +19,10 @@ validador INDEPENDENTE (jsonschema). A rede nunca é tocada: `httpx.AsyncClient`
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -30,7 +32,16 @@ import pytest
 from mcp import Client
 
 from geosgb_mcp import server as server_module
-from geosgb_mcp.constants import BASE_URL, ENDPOINTS, REE_HOST_ROCKS, REE_SEARCH_TERMS, UF_CODES
+from geosgb_mcp.constants import (
+    BASE_URL,
+    ENDPOINTS,
+    OCCURRENCE_FIELDS,
+    RARE_EARTH_FIELDS,
+    REE_HOST_ROCKS,
+    REE_SEARCH_TERMS,
+    SUBSTANCES_CACHE_TTL,
+    UF_CODES,
+)
 from geosgb_mcp.provenance import LAYER_URL
 from geosgb_mcp.tools import occurrences as occurrences_module
 
@@ -45,7 +56,6 @@ FEATURE_CHEIA = {
         "STATUS_ECONOMICO": "Ocorrência",
         "ROCHAS_HOSPEDEIRAS": "Carbonatito",
         "ROCHAS_ENCAIXANTES": "Gnaisse",
-        "TIPOLOGIA": "Carbonatítica",
         "PROVINCIA": "Alto Paranaíba",
         "CLASSES_UTILITARIAS": "Metais raros",
         "UF": "MG",
@@ -72,7 +82,6 @@ FEATURE_MAGRA = {
         "STATUS_ECONOMICO": None,
         "ROCHAS_HOSPEDEIRAS": None,
         "ROCHAS_ENCAIXANTES": None,
-        "TIPOLOGIA": None,
         "PROVINCIA": None,
         "CLASSES_UTILITARIAS": None,
         "UF": None,
@@ -87,17 +96,18 @@ FEATURE_MAGRA = {
 
 @dataclass
 class Cenario:
-    """O que o portal responde: `returnCountOnly` -> count; query -> features."""
+    """O que o portal responde a uma query: as features. Não há mais `count`
+    aqui — desde 2026-09-17 (Sessão 2) tool nenhuma pede `returnCountOnly`
+    (a fonte não pagina: a query já traz tudo e `total_count` é
+    `len(features)`), e o portal falso REPROVA quem voltar a pedir."""
 
-    count: int
     features: list[dict[str, Any]] = field(default_factory=list)
 
 
-CHEIO = Cenario(count=2, features=[FEATURE_CHEIA, FEATURE_CHEIA_2])
-MAGRO = Cenario(count=1, features=[FEATURE_MAGRA])
-VAZIO = Cenario(count=0, features=[])
+CHEIO = Cenario(features=[FEATURE_CHEIA, FEATURE_CHEIA_2])
+MAGRO = Cenario(features=[FEATURE_MAGRA])
+VAZIO = Cenario(features=[])
 SUBSTANCIAS_CHEIAS = Cenario(
-    count=3,
     features=[
         {"attributes": {"SUBSTANCIAS": "Ouro, Prata"}},
         {"attributes": {"SUBSTANCIAS": "Ouro"}},
@@ -105,39 +115,56 @@ SUBSTANCIAS_CHEIAS = Cenario(
     ],
 )
 SUBSTANCIAS_MAGRAS = Cenario(
-    count=2,
     features=[{"attributes": {"SUBSTANCIAS": None}}, {"attributes": {}}],
 )
 
 URL_QUERY = f"{BASE_URL}{ENDPOINTS['ocorrencias']}/query"
 
 
-def _handler_para(cenario: Cenario):
-    def handler(request: httpx.Request) -> httpx.Response:
+class Portal:
+    """Fonte falsa que responde pelo cenário e GRAVA cada requisição — é o
+    que permite medir, sem rede, quantas idas cada tool faz e o que pede."""
+
+    def __init__(self, cenario: Cenario) -> None:
+        self.cenario = cenario
+        self.requisicoes: list[httpx.Request] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
         url_sem_query = str(request.url).split("?", 1)[0]
         if url_sem_query != URL_QUERY:
             raise AssertionError(f"requisição inesperada: {request.url}")
+        self.requisicoes.append(request)
         if request.url.params.get("returnCountOnly") == "true":
-            return httpx.Response(200, json={"count": cenario.count})
-        return httpx.Response(200, json={"features": cenario.features})
-
-    return handler
+            raise AssertionError(
+                "returnCountOnly: a fonte não pagina e a query já traz o total — "
+                "a requisição de contagem foi derrubada em 2026-09-17"
+            )
+        return httpx.Response(200, json={"features": self.cenario.features})
 
 
 @pytest.fixture
 def portal(monkeypatch):
-    """Devolve `usar(cenario)`: a partir daí todo `httpx.AsyncClient` novo
-    responde pelo cenário, sem rede. O cliente lê `httpx.AsyncClient` como
-    atributo do módulo em `_get_client`, então a troca pega."""
+    """Devolve `usar(cenario) -> Portal`: a partir daí todo `httpx.AsyncClient`
+    novo responde pelo cenário, sem rede. O cliente lê `httpx.AsyncClient`
+    como atributo do módulo em `_get_client`, então a troca pega. O cache de
+    substâncias é limpo por teste — um teste não herda a ida do outro."""
 
-    def usar(cenario: Cenario) -> None:
-        transporte = httpx.MockTransport(_handler_para(cenario))
+    occurrences_module._substances_cache.clear()
+    monkeypatch.setattr(occurrences_module._substances_cache, "clock", time.monotonic)
+    # Sempre a classe ORIGINAL: `usar` pode ser chamado mais de uma vez no
+    # mesmo teste, e herdar da falsa anterior duplicaria `transport`.
+    AsyncClientReal = httpx.AsyncClient
 
-        class AsyncClientFalso(httpx.AsyncClient):
+    def usar(cenario: Cenario) -> Portal:
+        fonte = Portal(cenario)
+        transporte = httpx.MockTransport(fonte.handler)
+
+        class AsyncClientFalso(AsyncClientReal):
             def __init__(self, **kwargs: Any) -> None:
                 super().__init__(transport=transporte, **kwargs)
 
         monkeypatch.setattr(httpx, "AsyncClient", AsyncClientFalso)
+        return fonte
 
     return usar
 
@@ -179,6 +206,7 @@ CASOS: list[Caso] = [
         },
         # offset é aplicado no cliente (a API não pagina): com dois achados e
         # offset 1, chega só o segundo — e total_count segue 2.
+        # total_count é len(features) da própria query: não há mais contagem.
         {"count": 1, "total_count": 2, "offset": 1, "features.0.id": 4102,
          "features.0.coordinates": {"lon": -46.8261, "lat": -19.9153},
          "features.0.municipality": "Tapira",
@@ -220,17 +248,21 @@ CASOS: list[Caso] = [
     Caso(
         "search_rare_earth_occurrences",
         "magro",
-        "registro com atributos nulos, sem geometria, sem rochas relacionadas",
+        "registro com atributos nulos, sem geometria; sem argumento = só substâncias",
         MAGRO,
-        {"include_related_rocks": False},
+        {},
+        # Default False desde 2026-09-17: sem o argumento, a WHERE não tem
+        # rocha nenhuma (com True, 96% do resultado eram pegmatitos).
         {"features.0.coordinates": None, "features.0.host_rocks": None,
-         "search_terms_used": list(REE_SEARCH_TERMS)},
+         "search_terms_used": list(REE_SEARCH_TERMS),
+         "provenance.dimension_key.where": "("
+         + " OR ".join(f"SUBSTANCIAS LIKE '%{t}%'" for t in REE_SEARCH_TERMS) + ")"},
     ),
     Caso(
         "get_occurrence_details",
         "cheio",
         "ocorrência com todos os atributos e geometria",
-        Cenario(count=1, features=[FEATURE_CHEIA]),
+        Cenario(features=[FEATURE_CHEIA]),
         {"occurrence_id": 4101},
         {"id": 4101, "enclosing_rocks": "Gnaisse", "sheet_code": "SE-23-Y-C",
          "coordinates": {"lon": -46.9439, "lat": -19.5836},
@@ -502,3 +534,152 @@ async def test_instructions_citam_cada_tool_publicada():
     for status in ("Mina", "Garimpo", "Indeterminado", "Não explotado"):
         assert f'"{status}"' in texto
     assert "Serviço Geológico do Brasil (SGB/CPRM) — GeoSGB" in texto
+
+
+# ---------------------------------------------------------------------------
+# Sessão 2 (2026-09-17): o custo da fonte sem paginação
+# ---------------------------------------------------------------------------
+
+
+async def test_busca_faz_uma_ida_so_e_pede_so_os_campos_da_resposta(portal):
+    """Até 2026-09-17 cada busca fazia DUAS requisições (`returnCountOnly` e
+    a query) e pedia `outFields=*` (37 campos, dos quais usava 8): `UF = 'MG'`
+    vinha em 8,0 MB / 13 s. A fonte não pagina, então a query já traz o total
+    (`count == len(features)` em 4 de 4 WHERE medidas) e só os campos da
+    resposta bastam (2,2 MB / ~4 s). Aqui: uma ida, `outFields` explícito,
+    `total_count` igual ao que a query devolveu. `get_occurrence_details`
+    segue com `*` — é um registro."""
+    esperado = {
+        "search_mineral_occurrences": ({"uf": "MG", "limit": 1}, ",".join(OCCURRENCE_FIELDS)),
+        "search_rare_earth_occurrences": ({"uf": "MG", "limit": 1}, ",".join(RARE_EARTH_FIELDS)),
+        "get_occurrence_details": ({"occurrence_id": 4101}, "*"),
+    }
+    assert "TIPOLOGIA" not in OCCURRENCE_FIELDS  # a camada não tem o campo
+    for nome, (args, out_fields) in esperado.items():
+        fonte = portal(CHEIO)
+        async with conectar() as cliente:
+            resultado = await cliente.call_tool(nome, args)
+        assert not resultado.is_error, resultado.content[0].text
+        assert len(fonte.requisicoes) == 1, f"{nome}: {len(fonte.requisicoes)} idas ao portal"
+        params = fonte.requisicoes[0].url.params
+        assert params["outFields"] == out_fields, nome
+        assert params["returnGeometry"] == "true" and "returnCountOnly" not in params
+        if nome != "get_occurrence_details":
+            assert resultado.structured_content["total_count"] == len(CHEIO.features)
+            assert resultado.structured_content["count"] == 1
+
+
+async def test_typology_saiu_do_contrato(esquemas):
+    """`typology` lia TIPOLOGIA, campo que a camada não tem (37 campos lidos
+    na fonte em 2026-09-17; pedi-lo dá 400): saía sempre nulo. Anunciar um
+    campo que nunca vem é esquema desonesto — saiu dos dois modelos."""
+    itens = esquemas["search_mineral_occurrences"]["$defs"]["OccurrenceSummary"]["properties"]
+    assert "typology" not in itens
+    assert "typology" not in esquemas["get_occurrence_details"]["properties"]
+
+
+async def test_lista_de_substancias_vem_do_cache_dentro_da_validade(portal):
+    """`list_mineral_substances` só existe baixando a camada inteira (36.484
+    registros, 1,6 MB, ~20 s; a fonte recusa agregar SUBSTANCIAS com 400).
+    Cache em processo: a segunda chamada não vai ao portal, responde em
+    menos de 50 ms, diz `served_from_cache=True` e repete o `retrieved_at`
+    da ida original. Vencida a validade, vai de novo."""
+    fonte = portal(SUBSTANCIAS_CHEIAS)
+    cache = occurrences_module._substances_cache
+    agora = [1000.0]
+    cache.clock = lambda: agora[0]
+
+    async with conectar() as cliente:
+        primeira = await cliente.call_tool("list_mineral_substances", {})
+        t0 = time.perf_counter()
+        segunda = await cliente.call_tool("list_mineral_substances", {})
+        dt = time.perf_counter() - t0
+    assert not primeira.is_error and not segunda.is_error
+    assert len(fonte.requisicoes) == 1, "a segunda chamada foi ao portal"
+    assert dt < 0.05, f"segunda chamada levou {dt * 1000:.0f} ms"
+
+    p1, p2 = primeira.structured_content["provenance"], segunda.structured_content["provenance"]
+    assert p1["served_from_cache"] is False and p2["served_from_cache"] is True
+    assert p1["retrieved_at"] == p2["retrieved_at"]
+    assert segunda.structured_content["substances"] == primeira.structured_content["substances"]
+    assert segunda.structured_content["substances"] == ["Nióbio", "Ouro", "Prata"]
+
+    # Validade vencida: nova ida, `retrieved_at` novo (a fonte falsa agora
+    # devolve outra lista, para provar que não é o cache antigo).
+    agora[0] += SUBSTANCES_CACHE_TTL + 1
+    fonte.cenario = Cenario(features=[{"attributes": {"SUBSTANCIAS": "Lítio"}}])
+    async with conectar() as cliente:
+        terceira = await cliente.call_tool("list_mineral_substances", {})
+    assert len(fonte.requisicoes) == 2
+    assert terceira.structured_content["provenance"]["served_from_cache"] is False
+    assert terceira.structured_content["substances"] == ["Lítio"]
+
+
+async def test_lista_de_substancias_concorrente_paga_uma_ida_so(portal):
+    """Duas chamadas simultâneas com o cache frio: o lock faz a segunda
+    esperar a primeira e servir do cache, em vez de baixar 1,6 MB em dobro."""
+    fonte = portal(SUBSTANCIAS_CHEIAS)
+    async with conectar() as cliente:
+        a, b = await asyncio.gather(
+            cliente.call_tool("list_mineral_substances", {}),
+            cliente.call_tool("list_mineral_substances", {}),
+        )
+    assert not a.is_error and not b.is_error
+    assert len(fonte.requisicoes) == 1
+    marcas = sorted(r.structured_content["provenance"]["served_from_cache"] for r in (a, b))
+    assert marcas == [False, True]
+
+
+@pytest.mark.parametrize("tool", ["search_mineral_occurrences", "search_rare_earth_occurrences"])
+async def test_bbox_incompleto_ou_invertido_e_recusado_antes_da_fonte(portal, tool):
+    """Até 2026-09-17 três cantos e um vazio viravam "sem bbox" em silêncio
+    (a busca ignorava a área e devolvia a UF inteira como resposta) e
+    `xmin > xmax` ia ao portal. Agora a recusa é na borda, nomeando o que
+    faltou ou o que está invertido, e o portal não é tocado."""
+    fonte = portal(CHEIO)
+    quatro = {"bbox_xmin": -47.5, "bbox_ymin": -20.5, "bbox_xmax": -46.0, "bbox_ymax": -19.0}
+    async with conectar() as cliente:
+        tres = await cliente.call_tool(tool, {k: v for k, v in quatro.items() if k != "bbox_ymax"})
+        assert tres.is_error and "bbox_ymax" in tres.content[0].text, tres.content[0].text
+        um = await cliente.call_tool(tool, {"bbox_xmin": -47.5})
+        assert um.is_error and "bbox_ymin, bbox_xmax, bbox_ymax" in um.content[0].text
+        invertido = await cliente.call_tool(tool, {**quatro, "bbox_xmin": -46.0, "bbox_xmax": -47.5})
+        assert invertido.is_error and "invertido" in invertido.content[0].text
+        vazio = await cliente.call_tool(tool, {**quatro, "bbox_ymin": -19.0})
+        assert vazio.is_error and "invertido" in vazio.content[0].text
+        fora = await cliente.call_tool(tool, {**quatro, "bbox_ymin": -95.0})
+        assert fora.is_error and "bbox_ymin=-95.0" in fora.content[0].text
+        assert fonte.requisicoes == [], "bbox inválido chegou ao portal"
+
+        certo = await cliente.call_tool(tool, {**quatro, "limit": 1})
+        assert not certo.is_error, certo.content[0].text
+        assert fonte.requisicoes[-1].url.params["geometry"] == "-47.5,-20.5,-46.0,-19.0"
+        nenhum = await cliente.call_tool(tool, {"uf": "MG", "limit": 1})
+        assert not nenhum.is_error
+        assert "geometry" not in fonte.requisicoes[-1].url.params
+
+
+async def test_rochas_relacionadas_e_opt_in(portal):
+    """Default de `include_related_rocks` é False desde 2026-09-17: com True
+    a busca de ETR baixava 2.383 registros (2,7 MB, 5,5 s) e 2.291 deles
+    (96%) eram pegmatitos, que hospedam de tudo; só por substância são 74
+    (60 KB, 1,5 s). O inputSchema anuncia o default, a descrição diz o custo
+    de cada modo e a chamada sem o argumento não põe rocha na WHERE."""
+    fonte = portal(CHEIO)
+    async with conectar() as cliente:
+        tools = {t.name: t for t in (await cliente.list_tools()).tools}
+        prop = tools["search_rare_earth_occurrences"].input_schema["properties"]["include_related_rocks"]
+        assert prop.get("default") is False, prop
+        assert "2.383" in tools["search_rare_earth_occurrences"].description
+        assert "96%" in tools["search_rare_earth_occurrences"].description
+
+        sem = await cliente.call_tool("search_rare_earth_occurrences", {"limit": 1})
+        com = await cliente.call_tool(
+            "search_rare_earth_occurrences", {"limit": 1, "include_related_rocks": True}
+        )
+    assert not sem.is_error and not com.is_error
+    where_sem = fonte.requisicoes[0].url.params["where"]
+    where_com = fonte.requisicoes[1].url.params["where"]
+    assert "ROCHAS_HOSPEDEIRAS" not in where_sem
+    assert all(f"ROCHAS_HOSPEDEIRAS LIKE '%{r}%'" in where_com for r in REE_HOST_ROCKS)
+    assert sem.structured_content["search_terms_used"] == list(REE_SEARCH_TERMS)

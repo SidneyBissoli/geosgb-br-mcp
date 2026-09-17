@@ -80,13 +80,17 @@ def build_provenance(
     where: str,
     geometry: tuple[float, float, float, float] | None = None,
     retrieved_at: str | None = None,
+    served_from_cache: bool = False,
 ) -> dict[str, Any]:
     """Bloco canônico para UMA ida à camada de ocorrências.
 
     `where` é a cláusula EFETIVA que foi ao portal; `geometry` o envelope, se
     houve; `retrieved_at` o instante real da extração (default: agora — as
-    tools chamam logo após a resposta do portal, não há cache). A ordem das
-    chaves é a do contrato e é parte dele.
+    buscas chamam logo após a resposta do portal). `served_from_cache` é True
+    só quando a resposta saiu do cache em processo (desde 2026-09-17, apenas
+    `list_mineral_substances`), e então `retrieved_at` é o instante da ida
+    ORIGINAL ao portal, não o de agora — é o que o contrato manda. A ordem
+    das chaves é a do contrato e é parte dele.
     """
     retrieved = retrieved_at or now_utc_iso()
     source_url = query_url(where, geometry)
@@ -111,6 +115,6 @@ def build_provenance(
         "notices": list(NOTICES),
         "derived": False,
         "derivation_note": None,
-        "served_from_cache": None,
+        "served_from_cache": served_from_cache,
         "field_sources": None,
     }
