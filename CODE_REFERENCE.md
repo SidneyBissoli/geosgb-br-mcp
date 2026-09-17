@@ -1,5 +1,12 @@
 # GeoSGB MCP Connector - Código de Referência
 
+> **Nota (2026-09-17):** este documento é o plano ORIGINAL e seus snippets
+> refletem o SDK 1.x (`from mcp.server.fastmcp import FastMCP`, retorno
+> `-> dict`). O código vivo em `src/geosgb_mcp/` migrou para o SDK 2.x
+> (`from mcp.server.mcpserver import MCPServer`), anota os retornos com
+> modelos Pydantic (`outputSchema`) e recusa argumento desconhecido. Em caso
+> de divergência, vale o código e `tests/test_output_contract.py`.
+
 ## Snippet 1: Cliente HTTP Base
 
 ```python

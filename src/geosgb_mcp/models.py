@@ -67,7 +67,7 @@ class SearchResult(BaseModel):
 # Os modelos acima espelham a FONTE (aliases ArcGIS em português). Estes
 # descrevem a RESPOSTA das tools, com os nomes em inglês que elas já devolviam
 # antes de existir contrato. Anotar o retorno da tool com um destes faz o
-# FastMCP publicar `outputSchema` em tools/list, preencher `structuredContent`
+# SDK publicar `outputSchema` em tools/list, preencher `structuredContent`
 # em tools/call e VALIDAR a resposta em runtime (resposta desobediente vira
 # `isError`).
 #

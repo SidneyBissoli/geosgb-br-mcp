@@ -1,6 +1,6 @@
 [project]
 name = "geosgb-mcp"
-version = "0.2.0"
+version = "0.3.0"
 description = "MCP connector para dados geológicos do Serviço Geológico do Brasil"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,12 +20,11 @@ classifiers = [
 ]
 
 dependencies = [
-    # Teto em 2: o SDK 2.x removeu `mcp.server.fastmcp` (FastMCP virou
-    # MCPServer em `mcp.server.mcpserver`) e `pip install -e .` num ambiente
-    # limpo resolvia 2.2.0 — o servidor não subia (medido em 2026-09-16).
-    # Piso em 1.10: primeira versão com outputSchema/structuredContent.
-    # Migrar para 2.x é item próprio; até lá, o pin.
-    "mcp>=1.10.0,<2",
+    # Linha 2.x desde 2026-09-17 (`MCPServer` em `mcp.server.mcpserver`;
+    # o 1.x tinha `FastMCP` em `mcp.server.fastmcp`, removido no 2). Teto em
+    # 3 porque o servidor toca API privada (`_tool_manager`, ver server.py)
+    # e a troca de major já quebrou o import uma vez sem ninguém ver.
+    "mcp>=2.0.0,<3",
     "httpx>=0.27.0",
     "pydantic>=2.0.0",
 ]

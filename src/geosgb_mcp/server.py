@@ -8,7 +8,8 @@ Este servidor expõe tools para consultar:
 - Lista de substâncias minerais
 """
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 from .models import (
     OccurrenceDetails,
@@ -17,10 +18,12 @@ from .models import (
     SubstanceList,
 )
 
-mcp = FastMCP("geosgb")
+# SDK 2.x (migrado em 2026-09-17): `FastMCP` virou `MCPServer`. O decorador
+# `@mcp.tool()` e a conversão do retorno não mudaram.
+mcp = MCPServer("geosgb")
 
 # Contrato de saída: cada tool anota o retorno com um modelo de models.py.
-# Com isso o FastMCP publica `outputSchema` em tools/list, preenche
+# Com isso o servidor publica `outputSchema` em tools/list, preenche
 # `structuredContent` em tools/call e reprova em runtime resposta que não
 # obedece (vira `isError`). Retorno `-> dict` não gera esquema nenhum — foi
 # assim até 2026-09. Gate: tests/test_output_contract.py.
@@ -142,7 +145,13 @@ async def get_occurrence_details(occurrence_id: int) -> OccurrenceDetails:
     """
     from .tools.occurrences import get_occurrence_details as _get_details
 
-    return await _get_details(occurrence_id)
+    try:
+        return await _get_details(occurrence_id)
+    except LookupError as exc:
+        # No SDK 2.x só `ToolError` leva a mensagem ao cliente; qualquer outra
+        # exceção vira "Error executing tool …" genérico e o texto fica no log
+        # do servidor. O não-achado é erro previsto: o cliente precisa do ID.
+        raise ToolError(str(exc)) from exc
 
 
 @mcp.tool()
@@ -160,16 +169,17 @@ async def list_mineral_substances() -> SubstanceList:
     return await _list_substances()
 
 
-def _forbid_unknown_arguments(server: FastMCP) -> None:
+def _forbid_unknown_arguments(server: MCPServer) -> None:
     """Faz cada tool recusar chave desconhecida nos argumentos.
 
-    O FastMCP 1.x monta o modelo de argumentos sem `extra="forbid"`: uma
-    chamada com `{"intruso": 1}` passava calada (medido em 2026-09-16 com o
-    SDK 1.30). Um argumento com o nome errado é a forma mais comum de um
-    cliente achar que filtrou e não ter filtrado. Aqui o modelo é reconstruído
-    com `extra="forbid"` e o `inputSchema` publicado ganha
+    O SDK monta o modelo de argumentos sem `extra="forbid"`: uma chamada com
+    `{"intruso": 1}` passava calada no 1.30 e, no 2.2, só gera um log
+    ("rejected arguments") e SEGUE respondendo como sucesso (medido em
+    2026-09-16 e 2026-09-17). Um argumento com o nome errado é a forma mais
+    comum de um cliente achar que filtrou e não ter filtrado. Aqui o modelo é
+    reconstruído com `extra="forbid"` e o `inputSchema` publicado ganha
     `additionalProperties: false`, para o cliente saber antes de chamar.
-    Usa `_tool_manager` (privado, estável na linha 1.x — o pin em pyproject).
+    Usa `_tool_manager` (privado; igual em 1.x e 2.x — o pin em pyproject).
     """
     for tool in server._tool_manager.list_tools():
         arg_model = tool.fn_metadata.arg_model

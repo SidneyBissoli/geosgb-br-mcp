@@ -211,8 +211,9 @@ async def get_occurrence_details(occurrence_id: int) -> dict:
         LookupError: se não existe ocorrência com esse ID. Até 2026-09 a
             função devolvia `{"error": ...}` com status de sucesso; com o
             contrato de saída (models.OccurrenceDetails) esse dict seria
-            reprovado pelo próprio SDK, então o erro é levantado — o FastMCP
-            o converte em resposta `isError` com a mensagem.
+            reprovado pelo próprio SDK, então o erro é levantado — server.py
+            o converte em `ToolError`, que chega ao cliente como `isError`
+            com a mensagem (SDK 2.x: só `ToolError` preserva o texto).
     """
     client = GeoSGBClient()
 

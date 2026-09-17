@@ -11,8 +11,8 @@ um campo ou o devolve nulo — por isso cada tool tem um caso CHEIO (todos os
 atributos e geometria) e um caso MAGRO (atributos nulos, sem geometria, lista
 vazia). É o equivalente pytest do gate vitest dos irmãos (ilo, bcb, sih).
 
-O teste roda o servidor de verdade (`geosgb_mcp.server.mcp`) por uma sessão em
-memória do SDK e valida contra o esquema que o `tools/list` publica, com um
+O teste roda o servidor de verdade (`geosgb_mcp.server.mcp`) pelo `Client` em
+memória do SDK 2.x e valida contra o esquema que o `tools/list` publica, com um
 validador INDEPENDENTE (jsonschema). A rede nunca é tocada: `httpx.AsyncClient`
 é substituído por uma subclasse com `MockTransport`.
 """
@@ -26,7 +26,7 @@ from typing import Any
 import httpx
 import jsonschema
 import pytest
-from mcp.shared.memory import create_connected_server_and_client_session
+from mcp import Client
 
 from geosgb_mcp import server as server_module
 from geosgb_mcp.constants import BASE_URL, ENDPOINTS
@@ -256,18 +256,19 @@ CASOS: list[Caso] = [
 # ---------------------------------------------------------------------------
 
 
-def conectar():
+def conectar() -> Client:
     """Cliente MCP ligado ao servidor de verdade pelo transporte em memória —
     o equivalente Python do `InMemoryTransport.createLinkedPair()` do gate TS.
-    Uma sessão por `async with`."""
-    return create_connected_server_and_client_session(server_module.mcp._mcp_server)
+    SDK 2.x: `Client(servidor)`; no 1.x era
+    `create_connected_server_and_client_session`. Uma sessão por `async with`."""
+    return Client(server_module.mcp)
 
 
 @pytest.fixture
 async def esquemas() -> dict[str, dict[str, Any] | None]:
     async with conectar() as cliente:
         tools = (await cliente.list_tools()).tools
-    return {t.name: t.outputSchema for t in tools}
+    return {t.name: t.output_schema for t in tools}
 
 
 def _no_caminho(dado: Any, caminho: str) -> Any:
@@ -296,13 +297,13 @@ async def test_structured_content_obedece_ao_output_schema(caso: Caso, esquemas,
         resultado = await cliente.call_tool(caso.tool, caso.args)
 
     texto = resultado.content[0].text
-    assert not resultado.isError, f"{caso.tool} devolveu erro: {texto}"
-    assert resultado.structuredContent is not None, f"{caso.tool} sem structuredContent"
+    assert not resultado.is_error, f"{caso.tool} devolveu erro: {texto}"
+    assert resultado.structured_content is not None, f"{caso.tool} sem structuredContent"
 
     # O que o CLIENTE vê: o estruturado atravessa como JSON. A sessão em
     # memória serializa de verdade, mas o round-trip aqui garante que nada
     # não-serializável (datetime, set) passou.
-    no_fio = json.loads(json.dumps(resultado.structuredContent))
+    no_fio = json.loads(json.dumps(resultado.structured_content))
     erros = _validar(esquema, no_fio)
     assert not erros, f"{caso.tool}: {erros}"
 
@@ -337,14 +338,14 @@ async def test_reprova_esquema_desonesto(esquemas, portal):
     portal(MAGRO)
     async with conectar() as cliente:
         resultado = await cliente.call_tool("get_occurrence_details", {"occurrence_id": 99})
-    assert not resultado.isError
+    assert not resultado.is_error
     honesto = esquemas["get_occurrence_details"]
-    assert _validar(honesto, resultado.structuredContent) == []
+    assert _validar(honesto, resultado.structured_content) == []
 
     desonesto = json.loads(json.dumps(honesto))
     # `substance` é nulo no registro magro; anunciá-lo como string é a mentira.
     desonesto["properties"]["substance"] = {"type": "string"}
-    erros = _validar(desonesto, resultado.structuredContent)
+    erros = _validar(desonesto, resultado.structured_content)
     assert erros and any("None" in e or "null" in e for e in erros), erros
 
 
@@ -359,9 +360,9 @@ async def test_resposta_mutilada_vira_is_error(monkeypatch):
     monkeypatch.setattr(occurrences_module, "list_mineral_substances", mutilada)
     async with conectar() as cliente:
         resultado = await cliente.call_tool("list_mineral_substances", {})
-    assert resultado.isError
+    assert resultado.is_error
     assert "substances" in resultado.content[0].text
-    assert resultado.structuredContent is None
+    assert resultado.structured_content is None
 
 
 async def test_ocorrencia_inexistente_e_erro_declarado(portal):
@@ -370,7 +371,7 @@ async def test_ocorrencia_inexistente_e_erro_declarado(portal):
     portal(VAZIO)
     async with conectar() as cliente:
         resultado = await cliente.call_tool("get_occurrence_details", {"occurrence_id": 123456})
-    assert resultado.isError
+    assert resultado.is_error
     assert "123456" in resultado.content[0].text
     assert "não encontrada" in resultado.content[0].text
 
@@ -383,8 +384,8 @@ async def test_chave_desconhecida_nos_argumentos_e_recusada(portal):
     async with conectar() as cliente:
         tools = (await cliente.list_tools()).tools
         for tool in tools:
-            assert tool.inputSchema.get("additionalProperties") is False, tool.name
+            assert tool.input_schema.get("additionalProperties") is False, tool.name
         resultado = await cliente.call_tool("search_mineral_occurrences", {"estado": "MG"})
-    assert resultado.isError
+    assert resultado.is_error
     assert "estado" in resultado.content[0].text
     assert "Extra inputs are not permitted" in resultado.content[0].text

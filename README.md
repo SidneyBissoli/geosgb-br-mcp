@@ -15,6 +15,8 @@ MCP connector para dados geológicos do Serviço Geológico do Brasil (SGB/CPRM)
 pip install -e .
 ```
 
+Usa o SDK oficial `mcp` na linha 2.x (`MCPServer`); Python 3.10 ou superior.
+
 ## Uso
 
 ```bash
