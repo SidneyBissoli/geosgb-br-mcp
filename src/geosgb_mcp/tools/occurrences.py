@@ -1,6 +1,7 @@
 """Tools para busca de ocorrências minerais."""
 
 from ..client import GeoSGBClient
+from ..constants import REE_HOST_ROCKS, REE_SEARCH_TERMS
 
 
 async def search_mineral_occurrences(
@@ -120,20 +121,11 @@ async def search_rare_earth_occurrences(
     Returns:
         Dicionário com ocorrências de ETRs
     """
-    # Termos principais para busca de ETRs (reduzido para evitar queries muito longas)
-    ree_terms = [
-        "Terras raras",
-        "ETR",
-        "Monazita",
-        "Bastnasita",
-        "Xenotima",
-    ]
-
-    # Rochas hospedeiras típicas de ETRs
-    host_rocks = [
-        "Carbonatito",
-        "Pegmatito",
-    ]
+    # Uma fonte só para os termos (constants.py, com a medição). Até 2026-09-17
+    # havia aqui uma lista própria de 5 + 2, "reduzida para evitar queries
+    # muito longas" — a WHERE completa responde em 5,5 s.
+    ree_terms = REE_SEARCH_TERMS
+    host_rocks = REE_HOST_ROCKS
 
     substance_conditions = [f"SUBSTANCIAS LIKE '%{term}%'" for term in ree_terms]
 

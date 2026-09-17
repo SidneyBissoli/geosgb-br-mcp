@@ -29,7 +29,7 @@ import pytest
 from mcp import Client
 
 from geosgb_mcp import server as server_module
-from geosgb_mcp.constants import BASE_URL, ENDPOINTS, UF_CODES
+from geosgb_mcp.constants import BASE_URL, ENDPOINTS, REE_HOST_ROCKS, REE_SEARCH_TERMS, UF_CODES
 from geosgb_mcp.tools import occurrences as occurrences_module
 
 # ---------------------------------------------------------------------------
@@ -204,7 +204,9 @@ CASOS: list[Caso] = [
         CHEIO,
         {"uf": "MG", "include_related_rocks": True, "limit": 5},
         {"count": 2, "features.0.coordinates": {"lon": -46.9439, "lat": -19.5836},
-         "search_terms_used": ["Terras raras", "ETR", "Monazita", "Bastnasita", "Xenotima", "Carbonatito", "Pegmatito"]},
+         # Uma fonte só: o que a tool diz ter buscado É a lista de constants.py
+         # (até 2026-09-17 era uma lista própria de 5 + 2).
+         "search_terms_used": list(REE_SEARCH_TERMS) + list(REE_HOST_ROCKS)},
     ),
     Caso(
         "search_rare_earth_occurrences",
@@ -213,7 +215,7 @@ CASOS: list[Caso] = [
         MAGRO,
         {"include_related_rocks": False},
         {"features.0.coordinates": None, "features.0.host_rocks": None,
-         "search_terms_used": ["Terras raras", "ETR", "Monazita", "Bastnasita", "Xenotima"]},
+         "search_terms_used": list(REE_SEARCH_TERMS)},
     ),
     Caso(
         "get_occurrence_details",

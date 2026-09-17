@@ -36,7 +36,18 @@ DEFAULT_TIMEOUT = 60.0
 DEFAULT_LIMIT = 100
 MAX_LIMIT = 1000
 
-# Termos de busca para ETRs
+# Termos de busca para ETRs — a ÚNICA lista que search_rare_earth_occurrences
+# usa (`SUBSTANCIAS LIKE '%termo%'`, um OR por termo). Até 2026-09-17 a tool
+# tinha uma lista própria de 5 termos "para evitar queries muito longas", sem
+# medição; e os elementos aqui estavam sem acento, que o LIKE da fonte não
+# perdoa (sensível a caixa e acento: "Cério" casa 25, "Cerio" zero).
+#
+# Medido contra o portal em 2026-09-17 (36.484 registros), achados por termo:
+# "Terras raras" 44, "Cério" 25, "Lantânio" 24, "Ítrio" 4, "Neodímio" 1; os
+# demais zero na fonte de hoje (ficam: são grafias legítimas que o cadastro
+# pode passar a usar e custam só comprimento de WHERE). A WHERE completa
+# (13 termos + 6 rochas, 703 caracteres) responde: count 1,7 s, query 5,5 s,
+# 2.383 registros — contra 1,1 s / 4,7 s / 2.352 da lista curta de 5 + 2.
 REE_SEARCH_TERMS = [
     "Terras raras",
     "Elementos terras raras",
@@ -44,16 +55,21 @@ REE_SEARCH_TERMS = [
     "Monazita",
     "Bastnasita",
     "Xenotima",
-    "Cerio",
-    "Lantanio",
-    "Neodimio",
-    "Itrio",
-    "Samario",
-    "Europio",
-    "Gadolinio",
+    "Cério",
+    "Lantânio",
+    "Neodímio",
+    "Ítrio",
+    "Samário",
+    "Európio",
+    "Gadolínio",
 ]
 
-# Rochas hospedeiras típicas de ETRs
+# Rochas hospedeiras típicas de ETRs (`ROCHAS_HOSPEDEIRAS LIKE`), entram com
+# include_related_rocks=True. Achados por rocha em 2026-09-17: "Pegmatito"
+# 2.291, "Carbonatito" 20, "Nefelina sienito" 4, "Granito alcalino" 1,
+# "Sienito alcalino" e "Fonolito" zero. Atenção: "Pegmatito" sozinho é 96% do
+# resultado da tool com o default — a decisão sobre esse default é da Sessão 3
+# do roadmap, não daqui.
 REE_HOST_ROCKS = [
     "Carbonatito",
     "Nefelina sienito",
