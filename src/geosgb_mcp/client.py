@@ -4,7 +4,7 @@ import asyncio
 import httpx
 from typing import Any
 
-from .constants import BASE_URL as _BASE_URL, ENDPOINTS as _ENDPOINTS
+from .constants import BASE_URL as _BASE_URL, DEFAULT_TIMEOUT, ENDPOINTS as _ENDPOINTS
 
 
 class GeoSGBClient:
@@ -18,12 +18,17 @@ class GeoSGBClient:
 
     ENDPOINTS = _ENDPOINTS
 
-    def __init__(self, timeout: float = 60.0, max_retries: int = 3, retry_delay: float = 2.0):
+    def __init__(
+        self,
+        timeout: float = DEFAULT_TIMEOUT,
+        max_retries: int = 3,
+        retry_delay: float = 2.0,
+    ):
         """
         Inicializa o cliente.
 
         Args:
-            timeout: Timeout em segundos para requisições
+            timeout: Timeout em segundos para requisições (constants.DEFAULT_TIMEOUT)
             max_retries: Número máximo de tentativas em caso de erro
             retry_delay: Delay em segundos entre tentativas
         """

@@ -14,7 +14,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
-from .constants import DEFAULT_LIMIT, MAX_LIMIT
+from .constants import DEFAULT_LIMIT, MAX_LIMIT, UF
 from .models import (
     OccurrenceDetails,
     OccurrenceSearchResult,
@@ -36,7 +36,10 @@ mcp = MCPServer("geosgb")
 @mcp.tool()
 async def search_mineral_occurrences(
     substance: str | None = None,
-    uf: str | None = None,
+    # Sigla maiúscula, uma das 27 (constants.UF): o inputSchema publica o
+    # enum e o SDK recusa "Minas" ou "mg" com a lista na mensagem. Até
+    # 2026-09-17 era `str` e o valor errado virava zero achado em silêncio.
+    uf: UF | None = None,
     municipality: str | None = None,
     economic_status: str | None = None,
     bbox_xmin: float | None = None,
@@ -57,7 +60,7 @@ async def search_mineral_occurrences(
 
     Args:
         substance: Nome da substância mineral (ex: "Ouro", "Terras raras", "Litio", "Niobio")
-        uf: Sigla do estado brasileiro (ex: "MG", "GO", "BA", "AM")
+        uf: Sigla da unidade da federação, em maiúsculas (ex: "MG", "GO", "BA", "AM")
         municipality: Nome do município
         economic_status: Status econômico da ocorrência ("Mina", "Garimpo", "Ocorrencia", "Indeterminado")
         bbox_xmin: Longitude mínima do bounding box (WGS84)
@@ -92,7 +95,7 @@ async def search_mineral_occurrences(
 
 @mcp.tool()
 async def search_rare_earth_occurrences(
-    uf: str | None = None,
+    uf: UF | None = None,
     bbox_xmin: float | None = None,
     bbox_ymin: float | None = None,
     bbox_xmax: float | None = None,
@@ -107,7 +110,7 @@ async def search_rare_earth_occurrences(
     energética, incluindo lantanídeos, escândio e ítrio.
 
     Args:
-        uf: Sigla do estado (ex: "MG", "GO", "BA")
+        uf: Sigla da unidade da federação, em maiúsculas (ex: "MG", "GO", "BA")
         bbox_xmin: Longitude mínima
         bbox_ymin: Latitude mínima
         bbox_xmax: Longitude máxima

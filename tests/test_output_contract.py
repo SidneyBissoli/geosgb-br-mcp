@@ -29,7 +29,7 @@ import pytest
 from mcp import Client
 
 from geosgb_mcp import server as server_module
-from geosgb_mcp.constants import BASE_URL, ENDPOINTS
+from geosgb_mcp.constants import BASE_URL, ENDPOINTS, UF_CODES
 from geosgb_mcp.tools import occurrences as occurrences_module
 
 # ---------------------------------------------------------------------------
@@ -412,3 +412,26 @@ async def test_limite_de_resultados_e_imposto(portal):
         assert negativo.is_error
         no_teto = await cliente.call_tool("search_mineral_occurrences", {"limit": 1000})
         assert not no_teto.is_error
+
+
+async def test_uf_e_validada_no_esquema(portal):
+    """`uf="Minas"` virava `UF = 'MINAS'` e devolvia zero achado como se fosse
+    resposta (até 2026-09-17). Agora o inputSchema publica as 27 siglas e a
+    chamada com valor fora delas reprova com a lista — inclusive minúscula,
+    que antes passava por `upper()`: a sigla é como a fonte grava."""
+    portal(CHEIO)
+    async with conectar() as cliente:
+        tools = {t.name: t for t in (await cliente.list_tools()).tools}
+        for nome in ("search_mineral_occurrences", "search_rare_earth_occurrences"):
+            uf = tools[nome].input_schema["properties"]["uf"]
+            ramos = uf.get("anyOf", [uf])
+            enums = [r["enum"] for r in ramos if "enum" in r]
+            assert enums and set(enums[0]) == set(UF_CODES), nome
+
+        errado = await cliente.call_tool("search_mineral_occurrences", {"uf": "Minas"})
+        assert errado.is_error and "Minas" in errado.content[0].text
+        assert "'MG'" in errado.content[0].text
+        minuscula = await cliente.call_tool("search_rare_earth_occurrences", {"uf": "mg"})
+        assert minuscula.is_error
+        certo = await cliente.call_tool("search_mineral_occurrences", {"uf": "MG"})
+        assert not certo.is_error

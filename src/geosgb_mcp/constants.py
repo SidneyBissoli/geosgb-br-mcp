@@ -1,5 +1,7 @@
 """Constantes e configurações do GeoSGB MCP."""
 
+from typing import Literal, get_args
+
 # URLs base
 BASE_URL = "https://geoportal.sgb.gov.br/server/rest/services"
 
@@ -26,8 +28,11 @@ ENDPOINTS = {
     "sedimento_corrente": "/geoquimica/geoquimica_integrada/MapServer/2",
 }
 
-# Configurações de requisição
-DEFAULT_TIMEOUT = 30.0
+# Configurações de requisição. DEFAULT_TIMEOUT é o que o cliente usa de fato
+# (client.py lê daqui); até 2026-09-17 valia 30 aqui e 60 fixo no cliente, e
+# ninguém lia o 30. O valor é o que vinha valendo: uma busca larga (UF inteira,
+# 7,8 MB) leva ~11 s e a lista de substâncias ~18 s — 30 seria curto.
+DEFAULT_TIMEOUT = 60.0
 DEFAULT_LIMIT = 100
 MAX_LIMIT = 1000
 
@@ -58,9 +63,16 @@ REE_HOST_ROCKS = [
     "Fonolito",
 ]
 
-# Estados brasileiros (para validação)
-UF_CODES = [
+# Siglas das 27 unidades da federação, como a coluna UF da fonte as grava
+# (maiúsculas). O tipo é o que as tools usam no parâmetro `uf`: o SDK publica
+# as siglas como `enum` no inputSchema e recusa qualquer outra coisa com a
+# lista na mensagem. Até 2026-09-17 UF_CODES existia e ninguém lia:
+# `uf="Minas"` virava `UF = 'MINAS'` e devolvia zero como se fosse resposta.
+# `Literal[tuple(...)]` não serve (o SDK não enxerga os membros), por isso o
+# Literal é explícito e a lista deriva dele — uma fonte só.
+UF = Literal[
     "AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO",
     "MA", "MG", "MS", "MT", "PA", "PB", "PE", "PI", "PR",
-    "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO"
+    "RJ", "RN", "RO", "RR", "RS", "SC", "SE", "SP", "TO",
 ]
+UF_CODES: tuple[str, ...] = get_args(UF)
