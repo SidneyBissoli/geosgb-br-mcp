@@ -16,6 +16,11 @@ instáveis — o contrato valida a serviceDescription); sedimento_corrente
 migrado para /geoquimica/geoquimica_integrada/MapServer/2 ("Sedimento de
 Corrente", 151k pontos) — o serviço query_all morreu de vez (pendura em
 todos os níveis, embora ainda listado na raiz do diretório).
+2026-09-17 (Sessão 3): sedimento_corrente SAIU do contrato — a camada não
+tem resultado analítico (só metadados de amostragem e URL do RIGeo), então
+nenhuma tool a serve e vigiá-la é custo sem retorno (ver constants.py).
+Ficam quatro: ocorrencias (servida), afloramentos e litoestratigrafia_1m
+(decididas a entrar) e litoestratigrafia_estados (fora até haver resolvedor).
 
 Roda só com INTEGRATION_TESTS=1 (o resto da suíte já é live, mas este é o
 único com propósito de vigília; cron semanal em .github/workflows/integration.yml).
@@ -38,7 +43,6 @@ EXPECTED_NAME_TERM = {
     "afloramentos": "afloramentos",
     "litoestratigrafia_estados": "litoestratigr",
     "litoestratigrafia_1m": "litoestratigr",
-    "sedimento_corrente": "sedimento",
 }
 
 

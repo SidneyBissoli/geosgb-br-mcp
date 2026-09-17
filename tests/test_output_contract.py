@@ -107,8 +107,9 @@ class Cenario:
     sempre `ocorrencias`, e tool sobre outra camada não tinha como ser presa
     aqui). `exceeded_transfer_limit` faz a resposta trazer
     `exceededTransferLimit: true`, como a fonte faz quando corta em
-    `maxRecordCount` (1.000 em sedimento de corrente) — é o que uma tool
-    precisa ler para declarar `truncated: true` em vez de esconder o corte."""
+    `maxRecordCount` (afloramentos: 300.000 para 360.042 pontos, medido em
+    2026-09-17) — é o que uma tool precisa ler para declarar `truncated:
+    true` em vez de esconder o corte."""
 
     features: list[dict[str, Any]] = field(default_factory=list)
     camada: str = "ocorrencias"

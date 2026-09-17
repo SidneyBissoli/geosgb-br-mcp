@@ -21,12 +21,18 @@ ENDPOINTS = {
     # NÃO funciona direto nesta chave.
     "litoestratigrafia_estados": "/geologia/litoestratigrafia_estados/MapServer",
     "litoestratigrafia_1m": "/geologia/litoestratigrafia_1000000/MapServer/0",
-    # 2026-08: /sedimento_corrente_query_all (FeatureServer e MapServer) morreu
-    # na fonte — segue listado na raiz do diretório, mas responde HTML de erro
-    # e pendura conexões em todos os níveis. Substituído pela camada
-    # "Sedimento de Corrente" do serviço integrado de geoquímica
-    # (validada ao vivo em 2026-08-23: Query ok, 151.473 pontos).
-    "sedimento_corrente": "/geoquimica/geoquimica_integrada/MapServer/2",
+    # `sedimento_corrente` SAIU em 2026-09-17 (Sessão 3, decisão por camada).
+    # Histórico: /sedimento_corrente_query_all morreu na fonte em 2026-08 e a
+    # chave migrou para /geoquimica/geoquimica_integrada/MapServer/2
+    # ("Sedimento de Corrente", 151.473 pontos). Medida ao vivo em
+    # 2026-09-17, a camada NÃO tem resultado analítico: os 52 campos são
+    # metadados de amostragem (PROJETO, CLASSE, NUM_CAMPO, NUM_LAB, PH,
+    # EH_MILIVOL, VOLUME_L, descrição do local) e um URL para o documento no
+    # RIGeo — nenhum campo de elemento químico, em nenhuma das 9 camadas de
+    # geoquimica_integrada nem em geoquimica_integrada_all (sem tabelas nem
+    # relationships). Não tem UF, não pagina ("Pagination is not supported")
+    # e corta em 1.000 (maxRecordCount). Tool por elemento não é construível
+    # sobre essa fonte; vigiar camada que ninguém serve é custo sem retorno.
 }
 
 
@@ -54,16 +60,16 @@ class Layer:
 # até 2026-09-17 (Sessão 3, pré-requisito) tudo isso era constante fixa de
 # ocorrências, e a primeira tool sobre outra camada citaria a camada errada.
 #
-# Medido em 2026-09-17 nas três camadas vigiadas e ainda sem tool, para
+# Medido em 2026-09-17 nas duas camadas que a Sessão 3 decidiu servir, para
 # quando entrarem (o valor vai aqui, não se deduz): `afloramentos` — camada
 # "Afloramentos geológicos", serviço com copyrightText "Serviço Geológico do
 # Brasil - CPRM", maxRecordCount 300.000 (abaixo dos 360.042 pontos: consulta
 # sem filtro CORTA), 21 campos; `litoestratigrafia_1m` — "Unidades
 # litoestratigráficas - 1:1.000.000 [2004]", copyright "Serviço Geológico do
-# Brasil - CPRM", maxRecordCount 100.000, 30 campos, polígonos;
-# `sedimento_corrente` — "Sedimento de Corrente" (camada 2 de
-# geoquimica_integrada), copyright "Serviço Geológico do Brasil - CPRM",
-# maxRecordCount 1.000, 52 campos. Só ocorrências traz "SGB" no copyright.
+# Brasil - CPRM", maxRecordCount 100.000, 30 campos, polígonos. Só
+# ocorrências traz "SGB" no copyright. (`sedimento_corrente`, copyright
+# "Serviço Geológico do Brasil - CPRM", maxRecordCount 1.000, saiu — ver
+# ENDPOINTS.)
 LAYERS: dict[str, Layer] = {
     "ocorrencias": Layer(
         path=ENDPOINTS["ocorrencias"],
