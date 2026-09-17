@@ -8,9 +8,13 @@ Este servidor expõe tools para consultar:
 - Lista de substâncias minerais
 """
 
+from typing import Annotated
+
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from pydantic import Field
 
+from .constants import DEFAULT_LIMIT, MAX_LIMIT
 from .models import (
     OccurrenceDetails,
     OccurrenceSearchResult,
@@ -39,8 +43,11 @@ async def search_mineral_occurrences(
     bbox_ymin: float | None = None,
     bbox_xmax: float | None = None,
     bbox_ymax: float | None = None,
-    limit: int = 100,
-    offset: int = 0,
+    # Limites impostos no esquema (minimum/maximum) e na validação: até
+    # 2026-09-17 a docstring prometia "máximo: 1000" e nada impunha —
+    # limit=5000 passava e a API, que não pagina, devolvia tudo.
+    limit: Annotated[int, Field(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
+    offset: Annotated[int, Field(ge=0)] = 0,
 ) -> OccurrenceSearchResult:
     """
     Busca ocorrências minerais no banco de dados do Serviço Geológico do Brasil.
@@ -91,7 +98,7 @@ async def search_rare_earth_occurrences(
     bbox_xmax: float | None = None,
     bbox_ymax: float | None = None,
     include_related_rocks: bool = True,
-    limit: int = 100,
+    limit: Annotated[int, Field(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
 ) -> RareEarthSearchResult:
     """
     Busca ocorrências de Elementos Terras Raras (ETRs) no Brasil.

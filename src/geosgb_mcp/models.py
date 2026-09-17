@@ -1,7 +1,25 @@
-"""Modelos Pydantic para dados do Serviço Geológico do Brasil."""
+"""Modelos Pydantic do contrato de saída das tools (o que o cliente MCP recebe).
 
-from pydantic import BaseModel, ConfigDict, Field
+Anotar o retorno da tool com um destes faz o SDK publicar `outputSchema` em
+tools/list, preencher `structuredContent` em tools/call e VALIDAR a resposta
+em runtime (resposta desobediente vira `isError`). Os nomes são os em inglês
+que as tools já devolviam antes de existir contrato.
+
+Regra: todo campo é obrigatório e anulável, sem default. O SDK serializa o
+`structuredContent` a partir do modelo (`model_dump`) e o texto a partir do
+dict cru: um default preencheria só o estruturado e os dois divergiriam —
+tests/test_output_contract.py exige que sejam iguais, e tests/test_models.py
+prende a regra nos próprios modelos.
+
+Até 2026-09-17 este módulo também trazia modelos da FONTE (aliases ArcGIS em
+português: `MineralOccurrence`, `GeologicalOutcrop`, `SearchResult`), que
+nenhuma tool usava — as tools montam os dicts direto de `attributes`. Foram
+removidos: modelo que só o teste dele usa é contrato com ninguém.
+"""
+
 from typing import Optional
+
+from pydantic import BaseModel
 
 
 class Coordinates(BaseModel):
@@ -9,73 +27,6 @@ class Coordinates(BaseModel):
 
     lat: float
     lon: float
-
-
-class MineralOccurrence(BaseModel):
-    """Ocorrência mineral."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    id: int = Field(alias="ID_OCORRENCIA")
-    substance: Optional[str] = Field(None, alias="SUBSTANCIAS")
-    economic_status: Optional[str] = Field(None, alias="STATUS_ECONOMICO")
-    host_rocks: Optional[str] = Field(None, alias="ROCHAS_HOSPEDEIRAS")
-    enclosing_rocks: Optional[str] = Field(None, alias="ROCHAS_ENCAIXANTES")
-    typology: Optional[str] = Field(None, alias="TIPOLOGIA")
-    province: Optional[str] = Field(None, alias="PROVINCIA")
-    utilitarian_class: Optional[str] = Field(None, alias="CLASSES_UTILITARIAS")
-    uf: Optional[str] = Field(None, alias="UF")
-    municipality: Optional[str] = Field(None, alias="MUNICIPIO")
-    project: Optional[str] = Field(None, alias="PROJETO")
-    sheet_code: Optional[str] = Field(None, alias="CODIGO_FOLHA")
-    sheet_name: Optional[str] = Field(None, alias="FOLHA")
-    positioning_method: Optional[str] = Field(None, alias="METODO_GEOPOSICIONAMENTO")
-    coordinates: Optional[Coordinates] = None
-
-
-class GeologicalOutcrop(BaseModel):
-    """Afloramento geológico."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    id: int = Field(alias="ID_AFLORAMENTO")
-    outcrop_type: Optional[str] = Field(None, alias="TIPO_AFLORAMENTO")
-    description: Optional[str] = Field(None, alias="DESCRICAO")
-    field_number: Optional[str] = Field(None, alias="NUMERO_CAMPO")
-    rocks: Optional[str] = Field(None, alias="ROCHAS")
-    uf: Optional[str] = Field(None, alias="UF")
-    municipality: Optional[str] = Field(None, alias="MUNICIPIO")
-    toponymy: Optional[str] = Field(None, alias="TOPONIMIA")
-    project: Optional[str] = Field(None, alias="PROJETO")
-    positioning_method: Optional[str] = Field(None, alias="METODO_GEOPOSICIONAMENTO")
-    sureg: Optional[str] = Field(None, alias="SUREG")
-    coordinates: Optional[Coordinates] = None
-
-
-class SearchResult(BaseModel):
-    """Resultado de busca paginado."""
-
-    count: int
-    total_count: int
-    offset: int
-    features: list
-
-
-# ---------------------------------------------------------------------------
-# Contrato de saída das tools (o que o cliente MCP recebe)
-#
-# Os modelos acima espelham a FONTE (aliases ArcGIS em português). Estes
-# descrevem a RESPOSTA das tools, com os nomes em inglês que elas já devolviam
-# antes de existir contrato. Anotar o retorno da tool com um destes faz o
-# SDK publicar `outputSchema` em tools/list, preencher `structuredContent`
-# em tools/call e VALIDAR a resposta em runtime (resposta desobediente vira
-# `isError`).
-#
-# Regra: todo campo é obrigatório e anulável, sem default. O SDK serializa o
-# `structuredContent` a partir do modelo (`model_dump`) e o texto a partir do
-# dict cru: um default preencheria só o estruturado e os dois divergiriam —
-# tests/test_output_contract.py exige que sejam iguais.
-# ---------------------------------------------------------------------------
 
 
 class OccurrenceSummary(BaseModel):
