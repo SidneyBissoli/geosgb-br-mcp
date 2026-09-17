@@ -1,3 +1,9 @@
+# Nota (2026-09-17): script de prova MANUAL do plano original de janeiro de
+# 2026, não um teste. Ficava na raiz e nunca foi coletado pelo pytest
+# (`testpaths = tests`). Guardado aqui como registro; os testes vivos estão em
+# tests/ (offline: `pytest`; contra o portal: `INTEGRATION_TESTS=1 pytest`).
+# Porta de entrada do repositório: README.md da raiz.
+
 """Teste do servidor MCP GeoSGB."""
 
 import asyncio
