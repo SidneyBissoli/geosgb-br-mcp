@@ -22,7 +22,8 @@ async def search_mineral_occurrences(
         substance: Substância mineral (ex: "Terras raras", "Ouro", "Lítio")
         uf: Sigla do estado (ex: "MG", "GO", "BA")
         municipality: Nome do município
-        economic_status: Status econômico ("Mina", "Garimpo", "Ocorrência")
+        economic_status: Status econômico ("Mina", "Garimpo", "Indeterminado",
+            "Não explotado" — os valores da fonte em 2026-09-17)
         bbox: Bounding box (xmin, ymin, xmax, ymax) em WGS84
         limit: Máximo de resultados (default: 100)
         offset: Offset para paginação (aplicado no cliente)

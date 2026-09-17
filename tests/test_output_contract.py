@@ -485,3 +485,20 @@ async def test_toda_resposta_carrega_proveniencia(caso: Caso, portal):
         assert httpx.URL(bloco["source_url"]).params["geometryType"] == "esriGeometryEnvelope"
     else:
         assert "geometry" not in bloco["dimension_key"]
+
+
+async def test_instructions_citam_cada_tool_publicada():
+    """O `initialize` devolve o texto de roteamento e ele cita cada tool de
+    tools/list — tool nova sem menção reprova aqui. Também prende o que o
+    texto promete sobre os argumentos: sigla maiúscula e os quatro valores
+    de status econômico medidos na fonte em 2026-09-17."""
+    async with conectar() as cliente:
+        texto = cliente.instructions
+        nomes = [t.name for t in (await cliente.list_tools()).tools]
+    assert texto and len(texto) > 200
+    for nome in nomes:
+        assert nome in texto, f"instructions não cita {nome}"
+    assert "MAIÚSCULAS" in texto
+    for status in ("Mina", "Garimpo", "Indeterminado", "Não explotado"):
+        assert f'"{status}"' in texto
+    assert "Serviço Geológico do Brasil (SGB/CPRM) — GeoSGB" in texto
