@@ -146,7 +146,6 @@ async def test_get_occurrence_details():
 
 @pytest.mark.asyncio
 async def test_get_occurrence_not_found():
-    """Testa busca de ocorrência inexistente."""
-    details = await get_occurrence_details(999999999)
-
-    assert "error" in details
+    """Testa busca de ocorrência inexistente (erro levantado, não dict de erro)."""
+    with pytest.raises(LookupError, match="999999999"):
+        await get_occurrence_details(999999999)

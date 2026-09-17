@@ -10,7 +10,20 @@ Este servidor expõe tools para consultar:
 
 from mcp.server.fastmcp import FastMCP
 
+from .models import (
+    OccurrenceDetails,
+    OccurrenceSearchResult,
+    RareEarthSearchResult,
+    SubstanceList,
+)
+
 mcp = FastMCP("geosgb")
+
+# Contrato de saída: cada tool anota o retorno com um modelo de models.py.
+# Com isso o FastMCP publica `outputSchema` em tools/list, preenche
+# `structuredContent` em tools/call e reprova em runtime resposta que não
+# obedece (vira `isError`). Retorno `-> dict` não gera esquema nenhum — foi
+# assim até 2026-09. Gate: tests/test_output_contract.py.
 
 
 @mcp.tool()
@@ -25,7 +38,7 @@ async def search_mineral_occurrences(
     bbox_ymax: float | None = None,
     limit: int = 100,
     offset: int = 0,
-) -> dict:
+) -> OccurrenceSearchResult:
     """
     Busca ocorrências minerais no banco de dados do Serviço Geológico do Brasil.
 
@@ -76,7 +89,7 @@ async def search_rare_earth_occurrences(
     bbox_ymax: float | None = None,
     include_related_rocks: bool = True,
     limit: int = 100,
-) -> dict:
+) -> RareEarthSearchResult:
     """
     Busca ocorrências de Elementos Terras Raras (ETRs) no Brasil.
 
@@ -111,7 +124,7 @@ async def search_rare_earth_occurrences(
 
 
 @mcp.tool()
-async def get_occurrence_details(occurrence_id: int) -> dict:
+async def get_occurrence_details(occurrence_id: int) -> OccurrenceDetails:
     """
     Obtém detalhes completos de uma ocorrência mineral específica pelo ID.
 
@@ -133,7 +146,7 @@ async def get_occurrence_details(occurrence_id: int) -> dict:
 
 
 @mcp.tool()
-async def list_mineral_substances() -> dict:
+async def list_mineral_substances() -> SubstanceList:
     """
     Lista todas as substâncias minerais cadastradas no banco de dados do SGB.
 
@@ -145,6 +158,27 @@ async def list_mineral_substances() -> dict:
     from .tools.occurrences import list_mineral_substances as _list_substances
 
     return await _list_substances()
+
+
+def _forbid_unknown_arguments(server: FastMCP) -> None:
+    """Faz cada tool recusar chave desconhecida nos argumentos.
+
+    O FastMCP 1.x monta o modelo de argumentos sem `extra="forbid"`: uma
+    chamada com `{"intruso": 1}` passava calada (medido em 2026-09-16 com o
+    SDK 1.30). Um argumento com o nome errado é a forma mais comum de um
+    cliente achar que filtrou e não ter filtrado. Aqui o modelo é reconstruído
+    com `extra="forbid"` e o `inputSchema` publicado ganha
+    `additionalProperties: false`, para o cliente saber antes de chamar.
+    Usa `_tool_manager` (privado, estável na linha 1.x — o pin em pyproject).
+    """
+    for tool in server._tool_manager.list_tools():
+        arg_model = tool.fn_metadata.arg_model
+        arg_model.model_config["extra"] = "forbid"
+        arg_model.model_rebuild(force=True)
+        tool.parameters = arg_model.model_json_schema()
+
+
+_forbid_unknown_arguments(mcp)
 
 
 if __name__ == "__main__":

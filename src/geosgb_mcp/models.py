@@ -59,3 +59,93 @@ class SearchResult(BaseModel):
     total_count: int
     offset: int
     features: list
+
+
+# ---------------------------------------------------------------------------
+# Contrato de saída das tools (o que o cliente MCP recebe)
+#
+# Os modelos acima espelham a FONTE (aliases ArcGIS em português). Estes
+# descrevem a RESPOSTA das tools, com os nomes em inglês que elas já devolviam
+# antes de existir contrato. Anotar o retorno da tool com um destes faz o
+# FastMCP publicar `outputSchema` em tools/list, preencher `structuredContent`
+# em tools/call e VALIDAR a resposta em runtime (resposta desobediente vira
+# `isError`).
+#
+# Regra: todo campo é obrigatório e anulável, sem default. O SDK serializa o
+# `structuredContent` a partir do modelo (`model_dump`) e o texto a partir do
+# dict cru: um default preencheria só o estruturado e os dois divergiriam —
+# tests/test_output_contract.py exige que sejam iguais.
+# ---------------------------------------------------------------------------
+
+
+class OccurrenceSummary(BaseModel):
+    """Uma ocorrência na lista de `search_mineral_occurrences`."""
+
+    id: int
+    substance: Optional[str]
+    economic_status: Optional[str]
+    host_rocks: Optional[str]
+    typology: Optional[str]
+    province: Optional[str]
+    uf: Optional[str]
+    municipality: Optional[str]
+    project: Optional[str]
+    coordinates: Optional[Coordinates]
+
+
+class OccurrenceSearchResult(BaseModel):
+    """Resposta de `search_mineral_occurrences`."""
+
+    count: int
+    total_count: int
+    offset: int
+    features: list[OccurrenceSummary]
+
+
+class RareEarthOccurrence(BaseModel):
+    """Uma ocorrência na lista de `search_rare_earth_occurrences`."""
+
+    id: int
+    substance: Optional[str]
+    economic_status: Optional[str]
+    host_rocks: Optional[str]
+    province: Optional[str]
+    uf: Optional[str]
+    municipality: Optional[str]
+    coordinates: Optional[Coordinates]
+
+
+class RareEarthSearchResult(BaseModel):
+    """Resposta de `search_rare_earth_occurrences`."""
+
+    count: int
+    total_count: int
+    features: list[RareEarthOccurrence]
+    search_terms_used: list[str]
+
+
+class OccurrenceDetails(BaseModel):
+    """Resposta de `get_occurrence_details`."""
+
+    id: int
+    substance: Optional[str]
+    economic_status: Optional[str]
+    host_rocks: Optional[str]
+    enclosing_rocks: Optional[str]
+    typology: Optional[str]
+    province: Optional[str]
+    utilitarian_class: Optional[str]
+    uf: Optional[str]
+    municipality: Optional[str]
+    project: Optional[str]
+    sheet_code: Optional[str]
+    sheet_name: Optional[str]
+    positioning_method: Optional[str]
+    coordinates: Optional[Coordinates]
+
+
+class SubstanceList(BaseModel):
+    """Resposta de `list_mineral_substances`."""
+
+    count: int
+    substances: list[str]
