@@ -82,7 +82,7 @@ async def search_mineral_occurrences(
             geometry=bbox,
         )
         # Instante real da extração: logo após a resposta do portal.
-        provenance = build_provenance(where_clause, bbox)
+        provenance = build_provenance("ocorrencias", where_clause, bbox)
 
         features = result.get("features", [])
         total_count = len(features)
@@ -178,7 +178,7 @@ async def search_rare_earth_occurrences(
             out_fields=",".join(RARE_EARTH_FIELDS),
             geometry=bbox,
         )
-        provenance = build_provenance(where_clause, bbox)
+        provenance = build_provenance("ocorrencias", where_clause, bbox)
 
         features = result.get("features", [])
         total_count = len(features)
@@ -250,7 +250,7 @@ async def get_occurrence_details(occurrence_id: int) -> dict:
             out_fields="*",
             return_geometry=True,
         )
-        provenance = build_provenance(where_clause)
+        provenance = build_provenance("ocorrencias", where_clause)
 
         features = result.get("features", [])
         if not features:
@@ -364,7 +364,7 @@ async def list_mineral_substances() -> dict:
             cache.store(substances, retrieved_at)
 
     provenance = build_provenance(
-        "1=1", retrieved_at=cache.retrieved_at, served_from_cache=served_from_cache
+        "ocorrencias", "1=1", retrieved_at=cache.retrieved_at, served_from_cache=served_from_cache
     )
     return {
         "count": len(cache.substances),

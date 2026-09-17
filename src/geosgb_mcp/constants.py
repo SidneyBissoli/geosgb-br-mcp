@@ -1,5 +1,6 @@
 """Constantes e configurações do GeoSGB MCP."""
 
+from dataclasses import dataclass
 from typing import Literal, get_args
 
 # URLs base
@@ -26,6 +27,52 @@ ENDPOINTS = {
     # "Sedimento de Corrente" do serviço integrado de geoquímica
     # (validada ao vivo em 2026-08-23: Query ok, 151.473 pontos).
     "sedimento_corrente": "/geoquimica/geoquimica_integrada/MapServer/2",
+}
+
+
+@dataclass(frozen=True)
+class Layer:
+    """O que a proveniência precisa saber de uma camada SERVIDA por tool.
+
+    `path` é o mesmo caminho de ENDPOINTS (o contrato semanal vigia por lá);
+    `name` é o `name` da camada e `copyright_text` o `copyrightText` do
+    SERVIÇO (raiz do MapServer) — no nível da camada ele vem vazio nas quatro
+    camadas vigiadas (lido em 2026-09-17) e o texto muda de serviço para
+    serviço, por isso não se copia de ocorrências. `verified_at` é o dia em
+    que esses valores foram lidos do `?f=pjson`.
+    """
+
+    path: str
+    name: str
+    copyright_text: str
+    verified_at: str
+
+
+# Registro das camadas que TÊM tool — só essas entram aqui; ENDPOINTS lista
+# também as vigiadas e não servidas. É deste registro que `provenance.py`
+# deriva o endpoint, o `dataset`, a licença (o copyrightText) e a citação:
+# até 2026-09-17 (Sessão 3, pré-requisito) tudo isso era constante fixa de
+# ocorrências, e a primeira tool sobre outra camada citaria a camada errada.
+#
+# Medido em 2026-09-17 nas três camadas vigiadas e ainda sem tool, para
+# quando entrarem (o valor vai aqui, não se deduz): `afloramentos` — camada
+# "Afloramentos geológicos", serviço com copyrightText "Serviço Geológico do
+# Brasil - CPRM", maxRecordCount 300.000 (abaixo dos 360.042 pontos: consulta
+# sem filtro CORTA), 21 campos; `litoestratigrafia_1m` — "Unidades
+# litoestratigráficas - 1:1.000.000 [2004]", copyright "Serviço Geológico do
+# Brasil - CPRM", maxRecordCount 100.000, 30 campos, polígonos;
+# `sedimento_corrente` — "Sedimento de Corrente" (camada 2 de
+# geoquimica_integrada), copyright "Serviço Geológico do Brasil - CPRM",
+# maxRecordCount 1.000, 52 campos. Só ocorrências traz "SGB" no copyright.
+LAYERS: dict[str, Layer] = {
+    "ocorrencias": Layer(
+        path=ENDPOINTS["ocorrencias"],
+        name="Ocorrências minerais",
+        copyright_text="Serviço Geológico do Brasil - SGB - CPRM",
+        # Serviço geologia/ocorrencias/MapServer, currentVersion 11.3,
+        # maxRecordCount 100.000 (a camada tem 36.484: nenhuma WHERE corta).
+        verified_at="2026-09-17",
+    ),
 }
 
 # Configurações de requisição. DEFAULT_TIMEOUT é o que o cliente usa de fato
