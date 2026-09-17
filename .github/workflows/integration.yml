@@ -6,6 +6,8 @@ name: Integration tests (live GeoSGB portal)
 # (litoestratigrafia_estados sem FeatureServer; sedimento_corrente com página
 # de erro) — o workflow FALHA de propósito até o cliente migrar, e a falha
 # vira pendência no painel do portfolio-monitor (workflow_watch).
+# 2026-09-17: sedimento_corrente saiu do contrato (camada sem resultado
+# analítico; ver constants.py) — ficam quatro endpoints vigiados.
 
 on:
   # segunda 08:00 UTC = 05:00 BRT, antes da rodada semanal do monitor (09:00 BRT)
