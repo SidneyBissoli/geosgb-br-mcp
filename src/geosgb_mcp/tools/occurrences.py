@@ -2,6 +2,7 @@
 
 from ..client import GeoSGBClient
 from ..constants import REE_HOST_ROCKS, REE_SEARCH_TERMS
+from ..provenance import build_provenance
 
 
 async def search_mineral_occurrences(
@@ -60,6 +61,8 @@ async def search_mineral_occurrences(
             return_geometry=include_geometry,
             geometry=bbox,
         )
+        # Instante real da extração: logo após a resposta do portal.
+        provenance = build_provenance(where_clause, bbox)
 
         features = result.get("features", [])
 
@@ -96,6 +99,8 @@ async def search_mineral_occurrences(
             "total_count": total_count,
             "offset": offset,
             "features": occurrences,
+            "provenance": provenance,
+            "attribution": [provenance["source_url"]],
         }
 
     finally:
@@ -152,6 +157,7 @@ async def search_rare_earth_occurrences(
             where=where_clause,
             geometry=bbox,
         )
+        provenance = build_provenance(where_clause, bbox)
 
         features = result.get("features", [])
 
@@ -182,7 +188,12 @@ async def search_rare_earth_occurrences(
             "count": len(occurrences),
             "total_count": total_count,
             "features": occurrences,
+            # Fica ao lado do bloco de proveniência, não dentro dele: é a
+            # lista legível dos termos; `provenance.dimension_key.where` é a
+            # WHERE reproduzível que os contém (decisão de 2026-09-17).
             "search_terms_used": ree_terms + (host_rocks if include_related_rocks else []),
+            "provenance": provenance,
+            "attribution": [provenance["source_url"]],
         }
 
     finally:
@@ -210,12 +221,14 @@ async def get_occurrence_details(occurrence_id: int) -> dict:
     client = GeoSGBClient()
 
     try:
+        where_clause = f"ID_OCORRENCIA = {occurrence_id}"
         result = await client.query(
             endpoint_key="ocorrencias",
-            where=f"ID_OCORRENCIA = {occurrence_id}",
+            where=where_clause,
             out_fields="*",
             return_geometry=True,
         )
+        provenance = build_provenance(where_clause)
 
         features = result.get("features", [])
         if not features:
@@ -243,6 +256,8 @@ async def get_occurrence_details(occurrence_id: int) -> dict:
             "coordinates": {"lon": geom.get("x"), "lat": geom.get("y")}
             if geom
             else None,
+            "provenance": provenance,
+            "attribution": [provenance["source_url"]],
         }
 
     finally:
@@ -265,6 +280,7 @@ async def list_mineral_substances() -> dict:
             out_fields="SUBSTANCIAS",
             return_geometry=False,
         )
+        provenance = build_provenance("1=1")
 
         substances = set()
         for feature in result.get("features", []):
@@ -273,7 +289,12 @@ async def list_mineral_substances() -> dict:
                 for s in subst.split(","):
                     substances.add(s.strip())
 
-        return {"count": len(substances), "substances": sorted(list(substances))}
+        return {
+            "count": len(substances),
+            "substances": sorted(list(substances)),
+            "provenance": provenance,
+            "attribution": [provenance["source_url"]],
+        }
 
     finally:
         await client.close()
