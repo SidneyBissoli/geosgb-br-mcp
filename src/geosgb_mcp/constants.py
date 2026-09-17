@@ -68,7 +68,7 @@ REE_SEARCH_TERMS = [
 # include_related_rocks=True. Achados por rocha em 2026-09-17: "Pegmatito"
 # 2.291, "Carbonatito" 20, "Nefelina sienito" 4, "Granito alcalino" 1,
 # "Sienito alcalino" e "Fonolito" zero. Atenção: "Pegmatito" sozinho é 96% do
-# resultado da tool com o default — a decisão sobre esse default é da Sessão 3
+# resultado da tool com o default — a decisão sobre esse default é da Sessão 2
 # do roadmap, não daqui.
 REE_HOST_ROCKS = [
     "Carbonatito",
