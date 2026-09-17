@@ -35,6 +35,7 @@ from geosgb_mcp import server as server_module
 from geosgb_mcp.constants import (
     BASE_URL,
     ENDPOINTS,
+    LAYERS,
     OCCURRENCE_FIELDS,
     RARE_EARTH_FIELDS,
     REE_HOST_ROCKS,
@@ -42,7 +43,7 @@ from geosgb_mcp.constants import (
     SUBSTANCES_CACHE_TTL,
     UF_CODES,
 )
-from geosgb_mcp.provenance import LAYER_URL
+from geosgb_mcp.provenance import layer_url
 from geosgb_mcp.tools import occurrences as occurrences_module
 
 # ---------------------------------------------------------------------------
@@ -99,9 +100,23 @@ class Cenario:
     """O que o portal responde a uma query: as features. Não há mais `count`
     aqui — desde 2026-09-17 (Sessão 2) tool nenhuma pede `returnCountOnly`
     (a fonte não pagina: a query já traz tudo e `total_count` é
-    `len(features)`), e o portal falso REPROVA quem voltar a pedir."""
+    `len(features)`), e o portal falso REPROVA quem voltar a pedir.
+
+    `camada` é a chave de ENDPOINTS que o cenário serve: o portal só aceita
+    requisição ao `/query` dessa camada (Sessão 3, 2026-09-17 — antes era
+    sempre `ocorrencias`, e tool sobre outra camada não tinha como ser presa
+    aqui). `exceeded_transfer_limit` faz a resposta trazer
+    `exceededTransferLimit: true`, como a fonte faz quando corta em
+    `maxRecordCount` (1.000 em sedimento de corrente) — é o que uma tool
+    precisa ler para declarar `truncated: true` em vez de esconder o corte."""
 
     features: list[dict[str, Any]] = field(default_factory=list)
+    camada: str = "ocorrencias"
+    exceeded_transfer_limit: bool = False
+
+    @property
+    def url_query(self) -> str:
+        return f"{BASE_URL}{ENDPOINTS[self.camada]}/query"
 
 
 CHEIO = Cenario(features=[FEATURE_CHEIA, FEATURE_CHEIA_2])
@@ -118,12 +133,11 @@ SUBSTANCIAS_MAGRAS = Cenario(
     features=[{"attributes": {"SUBSTANCIAS": None}}, {"attributes": {}}],
 )
 
-URL_QUERY = f"{BASE_URL}{ENDPOINTS['ocorrencias']}/query"
-
-
 class Portal:
     """Fonte falsa que responde pelo cenário e GRAVA cada requisição — é o
-    que permite medir, sem rede, quantas idas cada tool faz e o que pede."""
+    que permite medir, sem rede, quantas idas cada tool faz e o que pede.
+    Só responde ao `/query` da camada do cenário: a tool tem de ir aonde a
+    proveniência diz que foi."""
 
     def __init__(self, cenario: Cenario) -> None:
         self.cenario = cenario
@@ -131,15 +145,21 @@ class Portal:
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         url_sem_query = str(request.url).split("?", 1)[0]
-        if url_sem_query != URL_QUERY:
-            raise AssertionError(f"requisição inesperada: {request.url}")
+        if url_sem_query != self.cenario.url_query:
+            raise AssertionError(
+                f"requisição inesperada: {request.url} — o cenário serve a camada "
+                f"{self.cenario.camada!r} ({self.cenario.url_query})"
+            )
         self.requisicoes.append(request)
         if request.url.params.get("returnCountOnly") == "true":
             raise AssertionError(
                 "returnCountOnly: a fonte não pagina e a query já traz o total — "
                 "a requisição de contagem foi derrubada em 2026-09-17"
             )
-        return httpx.Response(200, json={"features": self.cenario.features})
+        corpo: dict[str, Any] = {"features": self.cenario.features}
+        if self.cenario.exceeded_transfer_limit:
+            corpo["exceededTransferLimit"] = True
+        return httpx.Response(200, json=corpo)
 
 
 @pytest.fixture
@@ -186,6 +206,10 @@ class Caso:
     # falsa mandou chegar do outro lado — pega coordenada fabricada, lista
     # não deduplicada, offset perdido.
     espera: dict[str, Any] = field(default_factory=dict)
+    # Camada que a proveniência da resposta tem de citar (chave de LAYERS).
+    # O cenário diz aonde a tool FOI; isto diz o que ela DISSE — os dois
+    # precisam bater, e o teste de proveniência confere.
+    camada: str = "ocorrencias"
 
 
 CASOS: list[Caso] = [
@@ -494,15 +518,21 @@ async def test_toda_resposta_carrega_proveniencia(caso: Caso, portal):
     assert not resultado.is_error, resultado.content[0].text
     bloco = resultado.structured_content["provenance"]
 
+    # A camada que a resposta cita é a do caso — e é a mesma a que a tool
+    # foi (o portal falso só responde pela camada do cenário).
+    camada = LAYERS[caso.camada]
+    assert caso.camada == caso.cenario.camada
     assert bloco["contract_version"] == "1.0"
     assert bloco["source"]["name"] == "Serviço Geológico do Brasil (SGB/CPRM) — GeoSGB"
-    assert bloco["dataset"] == {"id": "ocorrencias", "version": None, "name": "Ocorrências minerais"}
+    assert bloco["source"]["endpoint"] == layer_url(caso.camada)
+    assert bloco["dataset"] == {"id": caso.camada, "version": None, "name": camada.name}
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", bloco["retrieved_at"]), bloco["retrieved_at"]
-    assert bloco["license"]["name"], "piso legal: license.name"
+    assert bloco["license"]["name"].startswith(camada.copyright_text), "piso legal: license.name"
     assert bloco["notices"] and "não declara licença" in bloco["notices"][0]
+    assert f"camada {camada.name}," in bloco["citation"]
 
     where = bloco["dimension_key"]["where"]
-    assert bloco["source_url"].startswith(LAYER_URL + "/query?")
+    assert bloco["source_url"].startswith(layer_url(caso.camada) + "/query?")
     assert httpx.URL(bloco["source_url"]).params["where"] == where
     assert bloco["source_url"] in bloco["citation"]
     assert resultado.structured_content["attribution"] == [bloco["source_url"]]
