@@ -24,7 +24,12 @@ python -m geosgb_mcp.server
 ```
 
 Toda tool declara `outputSchema` (derivado dos modelos em `models.py`) e
-responde com `structuredContent` validado pelo SDK. Argumento com nome
+responde com `structuredContent` validado pelo SDK. Toda resposta carrega um
+bloco `provenance` (contrato de proveniência v1.0 do portfólio, montado em
+`provenance.py`): URL da camada, cláusula WHERE efetiva, instante da extração
+em UTC, atribuição "Serviço Geológico do Brasil (SGB/CPRM) — GeoSGB" e o que a
+fonte declara de licença (nada além do `copyrightText`), mais `attribution`
+com a URL que reproduz a consulta. Argumento com nome
 desconhecido é recusado (`additionalProperties: false`). Ocorrência inexistente
 em `get_occurrence_details` é resposta de erro (`isError`), não um dict com
 `error`.

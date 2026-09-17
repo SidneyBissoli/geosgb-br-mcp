@@ -1,6 +1,8 @@
 """Tools para busca de ocorrências minerais."""
 
 from ..client import GeoSGBClient
+from ..constants import REE_HOST_ROCKS, REE_SEARCH_TERMS
+from ..provenance import build_provenance
 
 
 async def search_mineral_occurrences(
@@ -20,7 +22,8 @@ async def search_mineral_occurrences(
         substance: Substância mineral (ex: "Terras raras", "Ouro", "Lítio")
         uf: Sigla do estado (ex: "MG", "GO", "BA")
         municipality: Nome do município
-        economic_status: Status econômico ("Mina", "Garimpo", "Ocorrência")
+        economic_status: Status econômico ("Mina", "Garimpo", "Indeterminado",
+            "Não explotado" — os valores da fonte em 2026-09-17)
         bbox: Bounding box (xmin, ymin, xmax, ymax) em WGS84
         limit: Máximo de resultados (default: 100)
         offset: Offset para paginação (aplicado no cliente)
@@ -59,6 +62,8 @@ async def search_mineral_occurrences(
             return_geometry=include_geometry,
             geometry=bbox,
         )
+        # Instante real da extração: logo após a resposta do portal.
+        provenance = build_provenance(where_clause, bbox)
 
         features = result.get("features", [])
 
@@ -95,6 +100,8 @@ async def search_mineral_occurrences(
             "total_count": total_count,
             "offset": offset,
             "features": occurrences,
+            "provenance": provenance,
+            "attribution": [provenance["source_url"]],
         }
 
     finally:
@@ -120,20 +127,11 @@ async def search_rare_earth_occurrences(
     Returns:
         Dicionário com ocorrências de ETRs
     """
-    # Termos principais para busca de ETRs (reduzido para evitar queries muito longas)
-    ree_terms = [
-        "Terras raras",
-        "ETR",
-        "Monazita",
-        "Bastnasita",
-        "Xenotima",
-    ]
-
-    # Rochas hospedeiras típicas de ETRs
-    host_rocks = [
-        "Carbonatito",
-        "Pegmatito",
-    ]
+    # Uma fonte só para os termos (constants.py, com a medição). Até 2026-09-17
+    # havia aqui uma lista própria de 5 + 2, "reduzida para evitar queries
+    # muito longas" — a WHERE completa responde em 5,5 s.
+    ree_terms = REE_SEARCH_TERMS
+    host_rocks = REE_HOST_ROCKS
 
     substance_conditions = [f"SUBSTANCIAS LIKE '%{term}%'" for term in ree_terms]
 
@@ -160,6 +158,7 @@ async def search_rare_earth_occurrences(
             where=where_clause,
             geometry=bbox,
         )
+        provenance = build_provenance(where_clause, bbox)
 
         features = result.get("features", [])
 
@@ -190,7 +189,12 @@ async def search_rare_earth_occurrences(
             "count": len(occurrences),
             "total_count": total_count,
             "features": occurrences,
+            # Fica ao lado do bloco de proveniência, não dentro dele: é a
+            # lista legível dos termos; `provenance.dimension_key.where` é a
+            # WHERE reproduzível que os contém (decisão de 2026-09-17).
             "search_terms_used": ree_terms + (host_rocks if include_related_rocks else []),
+            "provenance": provenance,
+            "attribution": [provenance["source_url"]],
         }
 
     finally:
@@ -218,12 +222,14 @@ async def get_occurrence_details(occurrence_id: int) -> dict:
     client = GeoSGBClient()
 
     try:
+        where_clause = f"ID_OCORRENCIA = {occurrence_id}"
         result = await client.query(
             endpoint_key="ocorrencias",
-            where=f"ID_OCORRENCIA = {occurrence_id}",
+            where=where_clause,
             out_fields="*",
             return_geometry=True,
         )
+        provenance = build_provenance(where_clause)
 
         features = result.get("features", [])
         if not features:
@@ -251,6 +257,8 @@ async def get_occurrence_details(occurrence_id: int) -> dict:
             "coordinates": {"lon": geom.get("x"), "lat": geom.get("y")}
             if geom
             else None,
+            "provenance": provenance,
+            "attribution": [provenance["source_url"]],
         }
 
     finally:
@@ -273,6 +281,7 @@ async def list_mineral_substances() -> dict:
             out_fields="SUBSTANCIAS",
             return_geometry=False,
         )
+        provenance = build_provenance("1=1")
 
         substances = set()
         for feature in result.get("features", []):
@@ -281,7 +290,12 @@ async def list_mineral_substances() -> dict:
                 for s in subst.split(","):
                     substances.add(s.strip())
 
-        return {"count": len(substances), "substances": sorted(list(substances))}
+        return {
+            "count": len(substances),
+            "substances": sorted(list(substances)),
+            "provenance": provenance,
+            "attribution": [provenance["source_url"]],
+        }
 
     finally:
         await client.close()

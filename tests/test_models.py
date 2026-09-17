@@ -14,10 +14,16 @@ from geosgb_mcp.models import (
     OccurrenceDetails,
     OccurrenceSearchResult,
     OccurrenceSummary,
+    Provenance,
+    ProvenanceDataset,
+    ProvenanceFieldSource,
+    ProvenanceLicense,
+    ProvenanceSource,
     RareEarthOccurrence,
     RareEarthSearchResult,
     SubstanceList,
 )
+from geosgb_mcp.provenance import build_provenance
 
 MODELOS = [
     OccurrenceSummary,
@@ -26,7 +32,15 @@ MODELOS = [
     RareEarthSearchResult,
     OccurrenceDetails,
     SubstanceList,
+    Provenance,
+    ProvenanceSource,
+    ProvenanceDataset,
+    ProvenanceLicense,
+    ProvenanceFieldSource,
 ]
+
+# Bloco válido para construir respostas nos testes (o gate cobre o conteúdo).
+PROV = build_provenance("1=1")
 
 
 def _so_nulos(modelo, **fixos):
@@ -49,7 +63,7 @@ def test_json_schema_exige_todos_os_campos(modelo):
 
 
 def test_details_aceita_nulos_mas_nao_ausencia():
-    magro = _so_nulos(OccurrenceDetails, id=99)
+    magro = _so_nulos(OccurrenceDetails, id=99, provenance=PROV, attribution=[])
     detalhes = OccurrenceDetails(**magro)
     assert detalhes.coordinates is None and detalhes.substance is None
 
@@ -66,22 +80,61 @@ def test_id_nao_e_anulavel():
 
 def test_search_result_tipa_as_features():
     resultado = OccurrenceSearchResult(
-        count=1, total_count=1, offset=0, features=[_so_nulos(OccurrenceSummary, id=1)]
+        count=1, total_count=1, offset=0, features=[_so_nulos(OccurrenceSummary, id=1)],
+        provenance=PROV, attribution=[],
     )
     assert isinstance(resultado.features[0], OccurrenceSummary)
     with pytest.raises(ValidationError, match="features"):
-        OccurrenceSearchResult(count=1, total_count=1, offset=0, features=[{"bogus": 1}])
+        OccurrenceSearchResult(
+            count=1, total_count=1, offset=0, features=[{"bogus": 1}], provenance=PROV, attribution=[]
+        )
 
 
 def test_rare_earth_result_exige_termos_de_busca():
     with pytest.raises(ValidationError, match="search_terms_used"):
-        RareEarthSearchResult(count=0, total_count=0, features=[])
+        RareEarthSearchResult(count=0, total_count=0, features=[], provenance=PROV, attribution=[])
 
 
 def test_substance_list_so_strings():
-    assert SubstanceList(count=0, substances=[]).substances == []
+    assert SubstanceList(count=0, substances=[], provenance=PROV, attribution=[]).substances == []
     with pytest.raises(ValidationError, match="substances"):
-        SubstanceList(count=1, substances=[None])
+        SubstanceList(count=1, substances=[None], provenance=PROV, attribution=[])
+
+
+def test_toda_resposta_exige_proveniencia():
+    """Desde 0.4.0 os quatro modelos de saída carregam `provenance` e
+    `attribution`; resposta sem o bloco não passa no próprio SDK."""
+    for modelo in (OccurrenceSearchResult, RareEarthSearchResult, OccurrenceDetails, SubstanceList):
+        assert modelo.model_fields["provenance"].annotation is Provenance, modelo.__name__
+        assert modelo.model_fields["provenance"].is_required(), modelo.__name__
+        assert modelo.model_fields["attribution"].is_required(), modelo.__name__
+    with pytest.raises(ValidationError, match="provenance"):
+        SubstanceList(count=0, substances=[], attribution=[])
+
+
+def test_bloco_de_proveniencia_obedece_ao_contrato():
+    """Ordem canônica das chaves, piso legal (license.name), instante ISO em
+    UTC, URL que reproduz a consulta e determinismo fora do timestamp."""
+    bloco = build_provenance("UF = 'MG'", (-47.5, -20.5, -46.0, -19.0), retrieved_at="2026-09-17T12:00:00Z")
+    assert list(bloco) == [
+        "contract_version", "source", "dataset", "dimension_key", "data_vintage",
+        "retrieved_at", "source_url", "api_version", "license", "citation",
+        "notices", "derived", "derivation_note", "served_from_cache", "field_sources",
+    ]
+    assert bloco["contract_version"] == "1.0"
+    assert bloco["license"]["name"] and bloco["license"]["id"] is None
+    assert bloco["dimension_key"] == {"where": "UF = 'MG'", "geometry": "-47.5,-20.5,-46.0,-19.0"}
+    assert bloco["source_url"].startswith(
+        "https://geoportal.sgb.gov.br/server/rest/services/geologia/ocorrencias/MapServer/0/query?"
+    )
+    assert "where=UF+%3D+%27MG%27" in bloco["source_url"]
+    assert "geometry=-47.5%2C-20.5%2C-46.0%2C-19.0" in bloco["source_url"]
+    assert "extraído em 2026-09-17." in bloco["citation"] and bloco["source_url"] in bloco["citation"]
+    assert bloco["data_vintage"] is None and bloco["derived"] is False and bloco["field_sources"] is None
+    assert Provenance(**bloco).model_dump() == bloco
+    de_novo = build_provenance("UF = 'MG'", (-47.5, -20.5, -46.0, -19.0), retrieved_at="2026-09-17T12:00:00Z")
+    assert de_novo == bloco
+    assert build_provenance("1=1")["dimension_key"] == {"where": "1=1"}
 
 
 def test_coordinates():

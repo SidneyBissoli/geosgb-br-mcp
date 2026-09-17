@@ -20,6 +20,7 @@ validador INDEPENDENTE (jsonschema). A rede nunca é tocada: `httpx.AsyncClient`
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -29,7 +30,8 @@ import pytest
 from mcp import Client
 
 from geosgb_mcp import server as server_module
-from geosgb_mcp.constants import BASE_URL, ENDPOINTS
+from geosgb_mcp.constants import BASE_URL, ENDPOINTS, REE_HOST_ROCKS, REE_SEARCH_TERMS, UF_CODES
+from geosgb_mcp.provenance import LAYER_URL
 from geosgb_mcp.tools import occurrences as occurrences_module
 
 # ---------------------------------------------------------------------------
@@ -179,7 +181,10 @@ CASOS: list[Caso] = [
         # offset 1, chega só o segundo — e total_count segue 2.
         {"count": 1, "total_count": 2, "offset": 1, "features.0.id": 4102,
          "features.0.coordinates": {"lon": -46.8261, "lat": -19.9153},
-         "features.0.municipality": "Tapira"},
+         "features.0.municipality": "Tapira",
+         # Proveniência: a WHERE e o envelope que de fato foram ao portal.
+         "provenance.dimension_key": {"where": "SUBSTANCIAS LIKE '%Terras raras%' AND UF = 'MG'",
+                                      "geometry": "-47.5,-20.5,-46.0,-19.0"}},
     ),
     Caso(
         "search_mineral_occurrences",
@@ -204,7 +209,13 @@ CASOS: list[Caso] = [
         CHEIO,
         {"uf": "MG", "include_related_rocks": True, "limit": 5},
         {"count": 2, "features.0.coordinates": {"lon": -46.9439, "lat": -19.5836},
-         "search_terms_used": ["Terras raras", "ETR", "Monazita", "Bastnasita", "Xenotima", "Carbonatito", "Pegmatito"]},
+         # Uma fonte só: o que a tool diz ter buscado É a lista de constants.py
+         # (até 2026-09-17 era uma lista própria de 5 + 2).
+         "search_terms_used": list(REE_SEARCH_TERMS) + list(REE_HOST_ROCKS),
+         "provenance.dimension_key.where": "("
+         + " OR ".join([f"SUBSTANCIAS LIKE '%{t}%'" for t in REE_SEARCH_TERMS]
+                       + [f"ROCHAS_HOSPEDEIRAS LIKE '%{r}%'" for r in REE_HOST_ROCKS])
+         + ") AND UF = 'MG'"},
     ),
     Caso(
         "search_rare_earth_occurrences",
@@ -213,7 +224,7 @@ CASOS: list[Caso] = [
         MAGRO,
         {"include_related_rocks": False},
         {"features.0.coordinates": None, "features.0.host_rocks": None,
-         "search_terms_used": ["Terras raras", "ETR", "Monazita", "Bastnasita", "Xenotima"]},
+         "search_terms_used": list(REE_SEARCH_TERMS)},
     ),
     Caso(
         "get_occurrence_details",
@@ -222,7 +233,8 @@ CASOS: list[Caso] = [
         Cenario(count=1, features=[FEATURE_CHEIA]),
         {"occurrence_id": 4101},
         {"id": 4101, "enclosing_rocks": "Gnaisse", "sheet_code": "SE-23-Y-C",
-         "coordinates": {"lon": -46.9439, "lat": -19.5836}},
+         "coordinates": {"lon": -46.9439, "lat": -19.5836},
+         "provenance.dimension_key": {"where": "ID_OCORRENCIA = 4101"}},
     ),
     Caso(
         "get_occurrence_details",
@@ -238,7 +250,8 @@ CASOS: list[Caso] = [
         "substâncias repetidas e com espaços, deduplicadas e ordenadas",
         SUBSTANCIAS_CHEIAS,
         {},
-        {"count": 3, "substances": ["Nióbio", "Ouro", "Prata"]},
+        {"count": 3, "substances": ["Nióbio", "Ouro", "Prata"],
+         "provenance.dimension_key": {"where": "1=1"}},
     ),
     Caso(
         "list_mineral_substances",
@@ -412,3 +425,80 @@ async def test_limite_de_resultados_e_imposto(portal):
         assert negativo.is_error
         no_teto = await cliente.call_tool("search_mineral_occurrences", {"limit": 1000})
         assert not no_teto.is_error
+
+
+async def test_uf_e_validada_no_esquema(portal):
+    """`uf="Minas"` virava `UF = 'MINAS'` e devolvia zero achado como se fosse
+    resposta (até 2026-09-17). Agora o inputSchema publica as 27 siglas e a
+    chamada com valor fora delas reprova com a lista — inclusive minúscula,
+    que antes passava por `upper()`: a sigla é como a fonte grava."""
+    portal(CHEIO)
+    async with conectar() as cliente:
+        tools = {t.name: t for t in (await cliente.list_tools()).tools}
+        for nome in ("search_mineral_occurrences", "search_rare_earth_occurrences"):
+            uf = tools[nome].input_schema["properties"]["uf"]
+            ramos = uf.get("anyOf", [uf])
+            enums = [r["enum"] for r in ramos if "enum" in r]
+            assert enums and set(enums[0]) == set(UF_CODES), nome
+
+        errado = await cliente.call_tool("search_mineral_occurrences", {"uf": "Minas"})
+        assert errado.is_error and "Minas" in errado.content[0].text
+        assert "'MG'" in errado.content[0].text
+        minuscula = await cliente.call_tool("search_rare_earth_occurrences", {"uf": "mg"})
+        assert minuscula.is_error
+        certo = await cliente.call_tool("search_mineral_occurrences", {"uf": "MG"})
+        assert not certo.is_error
+
+
+@pytest.mark.parametrize("caso", CASOS, ids=[f"{c.tool}-{c.tipo}" for c in CASOS])
+async def test_toda_resposta_carrega_proveniencia(caso: Caso, portal):
+    """Convenção do portfólio (contrato v1.0): todo dado diz de onde veio.
+    Aqui o que o esquema não vê — o instante é ISO em UTC (forma, não valor),
+    a URL reproduz a WHERE efetiva, a atribuição é a do SGB e `attribution`
+    lista essa mesma URL."""
+    portal(caso.cenario)
+    async with conectar() as cliente:
+        resultado = await cliente.call_tool(caso.tool, caso.args)
+    assert not resultado.is_error, resultado.content[0].text
+    bloco = resultado.structured_content["provenance"]
+
+    assert bloco["contract_version"] == "1.0"
+    assert bloco["source"]["name"] == "Serviço Geológico do Brasil (SGB/CPRM) — GeoSGB"
+    assert bloco["dataset"] == {"id": "ocorrencias", "version": None, "name": "Ocorrências minerais"}
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", bloco["retrieved_at"]), bloco["retrieved_at"]
+    assert bloco["license"]["name"], "piso legal: license.name"
+    assert bloco["notices"] and "não declara licença" in bloco["notices"][0]
+
+    where = bloco["dimension_key"]["where"]
+    assert bloco["source_url"].startswith(LAYER_URL + "/query?")
+    assert httpx.URL(bloco["source_url"]).params["where"] == where
+    assert bloco["source_url"] in bloco["citation"]
+    assert resultado.structured_content["attribution"] == [bloco["source_url"]]
+
+    # A WHERE reflete o argumento do caso — não é um bloco fixo colado.
+    if "uf" in caso.args:
+        assert f"UF = '{caso.args['uf']}'" in where
+    if "occurrence_id" in caso.args:
+        assert where == f"ID_OCORRENCIA = {caso.args['occurrence_id']}"
+    if "bbox_xmin" in caso.args:
+        assert bloco["dimension_key"]["geometry"] == "-47.5,-20.5,-46.0,-19.0"
+        assert httpx.URL(bloco["source_url"]).params["geometryType"] == "esriGeometryEnvelope"
+    else:
+        assert "geometry" not in bloco["dimension_key"]
+
+
+async def test_instructions_citam_cada_tool_publicada():
+    """O `initialize` devolve o texto de roteamento e ele cita cada tool de
+    tools/list — tool nova sem menção reprova aqui. Também prende o que o
+    texto promete sobre os argumentos: sigla maiúscula e os quatro valores
+    de status econômico medidos na fonte em 2026-09-17."""
+    async with conectar() as cliente:
+        texto = cliente.instructions
+        nomes = [t.name for t in (await cliente.list_tools()).tools]
+    assert texto and len(texto) > 200
+    for nome in nomes:
+        assert nome in texto, f"instructions não cita {nome}"
+    assert "MAIÚSCULAS" in texto
+    for status in ("Mina", "Garimpo", "Indeterminado", "Não explotado"):
+        assert f'"{status}"' in texto
+    assert "Serviço Geológico do Brasil (SGB/CPRM) — GeoSGB" in texto

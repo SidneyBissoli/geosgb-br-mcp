@@ -22,6 +22,63 @@ from typing import Optional
 from pydantic import BaseModel
 
 
+# --- Proveniência (contrato v1.0 do portfólio; montado em provenance.py) ---
+# Desde 2026-09-17 (0.4.0) todo modelo de saída carrega `provenance` e
+# `attribution`, obrigatórios como os demais campos. As chaves seguem a
+# ordem canônica do contrato; ausência é null explícito.
+
+
+class ProvenanceSource(BaseModel):
+    name: str
+    agency: Optional[str]
+    database: Optional[str]
+    endpoint: Optional[str]
+
+
+class ProvenanceDataset(BaseModel):
+    id: Optional[str]
+    version: Optional[str]
+    name: Optional[str]
+
+
+class ProvenanceLicense(BaseModel):
+    """Piso legal do contrato: ao menos `id` ou `name` (prende-se no gate)."""
+
+    id: Optional[str]
+    name: Optional[str]
+    url: Optional[str]
+    terms_url: Optional[str]
+    verified_at: Optional[str]
+
+
+class ProvenanceFieldSource(BaseModel):
+    fields: list[str]
+    source_url: str
+    dataset_id: Optional[str]
+    data_vintage: Optional[str]
+    retrieved_at: Optional[str]
+
+
+class Provenance(BaseModel):
+    """Bloco canônico: de onde o dado veio, com que recorte, quando e sob que regime."""
+
+    contract_version: str
+    source: ProvenanceSource
+    dataset: ProvenanceDataset
+    dimension_key: Optional[dict[str, str]]
+    data_vintage: Optional[str]
+    retrieved_at: str
+    source_url: str
+    api_version: Optional[str]
+    license: ProvenanceLicense
+    citation: str
+    notices: list[str]
+    derived: bool
+    derivation_note: Optional[str]
+    served_from_cache: Optional[bool]
+    field_sources: Optional[list[ProvenanceFieldSource]]
+
+
 class Coordinates(BaseModel):
     """Coordenadas geográficas em WGS84."""
 
@@ -51,6 +108,9 @@ class OccurrenceSearchResult(BaseModel):
     total_count: int
     offset: int
     features: list[OccurrenceSummary]
+    provenance: Provenance
+    # Lista canônica de `source_url` distintas (RFC attribution do MCP).
+    attribution: list[str]
 
 
 class RareEarthOccurrence(BaseModel):
@@ -73,6 +133,9 @@ class RareEarthSearchResult(BaseModel):
     total_count: int
     features: list[RareEarthOccurrence]
     search_terms_used: list[str]
+    provenance: Provenance
+    # Lista canônica de `source_url` distintas (RFC attribution do MCP).
+    attribution: list[str]
 
 
 class OccurrenceDetails(BaseModel):
@@ -93,6 +156,9 @@ class OccurrenceDetails(BaseModel):
     sheet_name: Optional[str]
     positioning_method: Optional[str]
     coordinates: Optional[Coordinates]
+    provenance: Provenance
+    # Lista canônica de `source_url` distintas (RFC attribution do MCP).
+    attribution: list[str]
 
 
 class SubstanceList(BaseModel):
@@ -100,3 +166,6 @@ class SubstanceList(BaseModel):
 
     count: int
     substances: list[str]
+    provenance: Provenance
+    # Lista canônica de `source_url` distintas (RFC attribution do MCP).
+    attribution: list[str]

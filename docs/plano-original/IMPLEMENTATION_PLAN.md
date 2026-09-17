@@ -1,5 +1,14 @@
 # GeoSGB MCP Connector - Plano de Implementação e Testes
 
+> **Nota (2026-09-17):** este documento faz parte do plano ORIGINAL de janeiro
+> de 2026 e descreve o SDK 1.x (`from mcp.server.fastmcp import FastMCP`,
+> retorno `-> dict`) e tools que não existem. O código vivo em `src/geosgb_mcp/`
+> migrou para o SDK 2.x (`from mcp.server.mcpserver import MCPServer`), anota os
+> retornos com modelos Pydantic (`outputSchema`) e recusa argumento
+> desconhecido. Em caso de divergência, vale o código e
+> `tests/test_output_contract.py`. A porta de entrada do repositório é o
+> `README.md` da raiz.
+
 ## 1. Visão Geral do Plano
 
 ### 1.1 Objetivo deste Documento
