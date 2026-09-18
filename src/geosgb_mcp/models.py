@@ -169,3 +169,35 @@ class SubstanceList(BaseModel):
     provenance: Provenance
     # Lista canônica de `source_url` distintas (RFC attribution do MCP).
     attribution: list[str]
+
+
+class OutcropSummary(BaseModel):
+    """Um afloramento na lista de `get_geological_outcrops` (desde 0.6.0).
+
+    Campos da camada "Afloramentos geológicos" (constants.OUTCROP_FIELDS).
+    `outcrop_type` é nulo em 35% da fonte (medido em 2026-09-17);
+    `registered_at` é a data ISO (`YYYY-MM-DD`) convertida do epoch em
+    milissegundos que a fonte grava em `DATA_CADASTRO`, ou nulo.
+    """
+
+    id: int
+    toponymy: Optional[str]
+    outcrop_type: Optional[str]
+    rocks: Optional[str]
+    uf: Optional[str]
+    municipality: Optional[str]
+    project: Optional[str]
+    registered_at: Optional[str]
+    coordinates: Optional[Coordinates]
+
+
+class OutcropSearchResult(BaseModel):
+    """Resposta de `get_geological_outcrops`."""
+
+    count: int
+    total_count: int
+    offset: int
+    features: list[OutcropSummary]
+    provenance: Provenance
+    # Lista canônica de `source_url` distintas (RFC attribution do MCP).
+    attribution: list[str]

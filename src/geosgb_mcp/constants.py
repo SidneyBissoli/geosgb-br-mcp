@@ -60,13 +60,14 @@ class Layer:
 # até 2026-09-17 (Sessão 3, pré-requisito) tudo isso era constante fixa de
 # ocorrências, e a primeira tool sobre outra camada citaria a camada errada.
 #
-# Medido em 2026-09-17 nas duas camadas que a Sessão 3 decidiu servir, para
-# quando entrarem (o valor vai aqui, não se deduz): `afloramentos` — camada
-# "Afloramentos geológicos", serviço com copyrightText "Serviço Geológico do
-# Brasil - CPRM", maxRecordCount 300.000 (abaixo dos 360.042 pontos: consulta
-# sem filtro CORTA), 21 campos; `litoestratigrafia_1m` — "Unidades
-# litoestratigráficas - 1:1.000.000 [2004]", copyright "Serviço Geológico do
-# Brasil - CPRM", maxRecordCount 100.000, 30 campos, polígonos. Só
+# Medido em 2026-09-17 nas camadas que a Sessão 3 decidiu servir (o valor
+# vai aqui, não se deduz): `afloramentos` — camada "Afloramentos
+# geológicos", serviço com copyrightText "Serviço Geológico do Brasil -
+# CPRM", maxRecordCount 300.000 (abaixo dos 360.042 pontos: consulta sem
+# filtro CORTA), 21 campos — servida por `get_geological_outcrops` desde
+# 0.6.0; `litoestratigrafia_1m` — "Unidades litoestratigráficas -
+# 1:1.000.000 [2004]", copyright "Serviço Geológico do Brasil - CPRM",
+# maxRecordCount 100.000, 30 campos, polígonos — entra quando tiver tool. Só
 # ocorrências traz "SGB" no copyright. (`sedimento_corrente`, copyright
 # "Serviço Geológico do Brasil - CPRM", maxRecordCount 1.000, saiu — ver
 # ENDPOINTS.)
@@ -77,6 +78,15 @@ LAYERS: dict[str, Layer] = {
         copyright_text="Serviço Geológico do Brasil - SGB - CPRM",
         # Serviço geologia/ocorrencias/MapServer, currentVersion 11.3,
         # maxRecordCount 100.000 (a camada tem 36.484: nenhuma WHERE corta).
+        verified_at="2026-09-17",
+    ),
+    "afloramentos": Layer(
+        path=ENDPOINTS["afloramentos"],
+        name="Afloramentos geológicos",
+        copyright_text="Serviço Geológico do Brasil - CPRM",
+        # Serviço geologia/afloramentos/MapServer, currentVersion 11.3,
+        # maxRecordCount 300.000 para 360.042 pontos: só a consulta SEM
+        # filtro corta (`exceededTransferLimit`), e a tool não a permite.
         verified_at="2026-09-17",
     ),
 }
@@ -110,6 +120,35 @@ OCCURRENCE_FIELDS = (
 )
 # A busca de ETR não devolve `project`.
 RARE_EARTH_FIELDS = tuple(f for f in OCCURRENCE_FIELDS if f != "PROJETO")
+
+# Campos que `get_geological_outcrops` pede à camada de afloramentos (21
+# campos na fonte). Medido em 2026-09-17 em Santa Bárbara/MG (1.333 pontos):
+# estes 8 + coordenadas vêm em 0,50 MB / 0,2 s; `ROCHAS` custa +0,03 MB;
+# `DESCRICAO` sozinha quase dobra a resposta (0,89 MB / 2,7 s) e fica FORA.
+# `DATA_CADASTRO` chega em milissegundos de epoch (a tool converte para
+# data ISO); `TIPO_AFLORAMENTO` é nulo em 127.008 registros (35%). Os outros
+# campos da camada (OBJECTID, ORIGEM, METODO_GEOPOSICIONAMENTO, GEOLOGO,
+# NUMERO_CAMPO, SUREG, CODIGO_FOLHA, FOLHA, X, Y, DATUM) não entram.
+OUTCROP_FIELDS = (
+    "ID_AFLORAMENTO",
+    "TOPONIMIA",
+    "TIPO_AFLORAMENTO",
+    "ROCHAS",
+    "MUNICIPIO",
+    "UF",
+    "PROJETO",
+    "DATA_CADASTRO",
+)
+
+# Teto da área do bbox de `get_geological_outcrops`, em graus quadrados
+# (WGS84). A camada tem 360.042 pontos, a fonte não pagina e só corta sem
+# filtro nenhum (300.000): o teto é o que segura a resposta. Medido em
+# 2026-09-17 na região mais densa (Quadrilátero Ferrífero, MG): 1°×1° =
+# 8.572 pontos / 3,0 MB / 2,4 s; 2°×2° = 22.042 / 7,9 MB / 4,9 s; 3°×3° =
+# 32.177 / 11 MB / 8,9 s; 10°×10° = 122.998 / 40 MB / 41 s (httpx direto;
+# pela tool ponta a ponta o 1°×1° levou ~3,5 s). Um grau quadrado é o maior
+# recorte que fica abaixo de 10 mil pontos e de 5 MB no pior caso.
+OUTCROP_BBOX_MAX_DEG2 = 1.0
 
 # Validade do cache em processo de `list_mineral_substances`, em segundos.
 # A lista nasce de baixar a camada inteira (36.484 registros só com
