@@ -8,6 +8,8 @@ MCP connector para dados geológicos do Serviço Geológico do Brasil (SGB/CPRM)
 - `search_rare_earth_occurrences` - Busca ocorrências de Terras Raras
 - `get_occurrence_details` - Detalhes de uma ocorrência por ID
 - `list_mineral_substances` - Lista substâncias minerais cadastradas
+- `get_geological_outcrops` - Afloramentos geológicos por UF + município ou
+  bbox de até 1 grau quadrado (filtro obrigatório; desde 0.6.0)
 
 ## Instalação
 
@@ -52,6 +54,20 @@ Sessão 2 do roadmap):
   típicas e traz 2.383 registros, 96% deles pegmatitos.
 - O bbox exige os quatro cantos (ou nenhum), `xmin < xmax`, `ymin < ymax`,
   em graus WGS84; incompleto ou invertido é recusado antes de ir à fonte.
+- `get_geological_outcrops` (Sessão 3, 0.6.0) serve a camada "Afloramentos
+  geológicos": 360.042 pontos em 3.540 municípios, e a fonte só corta sem
+  filtro nenhum (`maxRecordCount` 300.000). Por isso o filtro é obrigatório
+  e recusado na borda quando falta: `uf` + `municipality` juntos (município
+  por igualdade exata, com a grafia da fonte — "Santa Bárbara" acha 1.333
+  pontos, "Santa Barbara" acha zero; `LIKE` pegaria 1.571, com vizinhos) ou
+  bbox de até 1 grau quadrado. Medido pela tool em 2026-09-17: Santa
+  Bárbara/MG em 0,5 MB / ~0,8 s; o maior município (São Félix do Xingu/PA)
+  tem 3.000 pontos, 1,2 MB / ~1,8 s; 1°×1° na região mais densa
+  (Quadrilátero Ferrífero) traz 8.572 pontos em 3,0 MB / ~3,5 s, e 2°×2° já
+  seriam 22.042 / 7,9 MB (recusado). A resposta
+  pede 8 campos + coordenadas; `DESCRICAO` fica fora (quase dobra o
+  tamanho). `DATA_CADASTRO` vem em epoch ms e sai como `registered_at` em
+  `YYYY-MM-DD`.
 
 ## Testes
 

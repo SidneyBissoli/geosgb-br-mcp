@@ -14,6 +14,8 @@ from geosgb_mcp.models import (
     OccurrenceDetails,
     OccurrenceSearchResult,
     OccurrenceSummary,
+    OutcropSearchResult,
+    OutcropSummary,
     Provenance,
     ProvenanceDataset,
     ProvenanceFieldSource,
@@ -32,6 +34,8 @@ MODELOS = [
     RareEarthSearchResult,
     OccurrenceDetails,
     SubstanceList,
+    OutcropSummary,
+    OutcropSearchResult,
     Provenance,
     ProvenanceSource,
     ProvenanceDataset,
@@ -103,8 +107,12 @@ def test_substance_list_so_strings():
 
 def test_toda_resposta_exige_proveniencia():
     """Desde 0.4.0 os quatro modelos de saída carregam `provenance` e
-    `attribution`; resposta sem o bloco não passa no próprio SDK."""
-    for modelo in (OccurrenceSearchResult, RareEarthSearchResult, OccurrenceDetails, SubstanceList):
+    `attribution` (cinco desde 0.6.0, com afloramentos); resposta sem o
+    bloco não passa no próprio SDK."""
+    for modelo in (
+        OccurrenceSearchResult, RareEarthSearchResult, OccurrenceDetails, SubstanceList,
+        OutcropSearchResult,
+    ):
         assert modelo.model_fields["provenance"].annotation is Provenance, modelo.__name__
         assert modelo.model_fields["provenance"].is_required(), modelo.__name__
         assert modelo.model_fields["attribution"].is_required(), modelo.__name__
@@ -184,14 +192,35 @@ def test_bloco_de_proveniencia_obedece_ao_contrato():
     # Só camada registrada tem proveniência: tool nova sobre camada fora de
     # LAYERS falha aqui, não cita a camada errada. E toda camada servida está
     # em ENDPOINTS, sob o mesmo caminho — o contrato semanal vigia por lá.
+    # Servidas em 0.6.0: ocorrências e afloramentos (2026-09-17);
+    # litoestratigrafia_1m segue vigiada e sem tool.
     from geosgb_mcp.constants import ENDPOINTS, LAYERS
 
-    with pytest.raises(ValueError, match="afloramentos.*constants.LAYERS"):
-        build_provenance("afloramentos", "1=1")
-    assert set(LAYERS) == {"ocorrencias"}
+    with pytest.raises(ValueError, match="litoestratigrafia_1m.*constants.LAYERS"):
+        build_provenance("litoestratigrafia_1m", "1=1")
+    assert set(LAYERS) == {"ocorrencias", "afloramentos"}
     for chave, camada in LAYERS.items():
         assert ENDPOINTS[chave] == camada.path, chave
         assert camada.name and camada.copyright_text and camada.verified_at, chave
+
+
+def test_outcrop_result_tipa_as_features():
+    """O modelo de afloramentos (0.6.0) segue a regra: `id` não anulável, o
+    resto obrigatório e anulável, `features` tipado."""
+    with pytest.raises(ValidationError, match="id"):
+        OutcropSummary(**_so_nulos(OutcropSummary))
+    magro = OutcropSummary(**_so_nulos(OutcropSummary, id=74194))
+    assert magro.registered_at is None and magro.coordinates is None
+    resultado = OutcropSearchResult(
+        count=1, total_count=1, offset=0, features=[_so_nulos(OutcropSummary, id=1)],
+        provenance=build_provenance("afloramentos", "UF = 'MG'"), attribution=[],
+    )
+    assert isinstance(resultado.features[0], OutcropSummary)
+    with pytest.raises(ValidationError, match="features"):
+        OutcropSearchResult(
+            count=1, total_count=1, offset=0, features=[{"bogus": 1}],
+            provenance=PROV, attribution=[],
+        )
 
 
 def test_coordinates():

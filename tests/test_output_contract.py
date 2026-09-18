@@ -37,6 +37,8 @@ from geosgb_mcp.constants import (
     ENDPOINTS,
     LAYERS,
     OCCURRENCE_FIELDS,
+    OUTCROP_BBOX_MAX_DEG2,
+    OUTCROP_FIELDS,
     RARE_EARTH_FIELDS,
     REE_HOST_ROCKS,
     REE_SEARCH_TERMS,
@@ -45,6 +47,7 @@ from geosgb_mcp.constants import (
 )
 from geosgb_mcp.provenance import layer_url
 from geosgb_mcp.tools import occurrences as occurrences_module
+from geosgb_mcp.tools import outcrops as outcrops_module
 
 # ---------------------------------------------------------------------------
 # Fonte falsa (geoportal do SGB)
@@ -133,6 +136,48 @@ SUBSTANCIAS_CHEIAS = Cenario(
 SUBSTANCIAS_MAGRAS = Cenario(
     features=[{"attributes": {"SUBSTANCIAS": None}}, {"attributes": {}}],
 )
+
+# Afloramentos (0.6.0, 2026-09-17): registro como a camada "Afloramentos
+# geológicos" devolve com os 8 campos de OUTCROP_FIELDS. `DATA_CADASTRO` é
+# epoch em milissegundos (867369600000 = 1997-06-27).
+AFLORAMENTO_CHEIO = {
+    "attributes": {
+        "ID_AFLORAMENTO": 74194,
+        "TOPONIMIA": "Estrada Santa Bárbara - Barão de Cocais, km 3",
+        "TIPO_AFLORAMENTO": "Lajedo ou Lajeiro",
+        "ROCHAS": "Quartzito micáceo",
+        "MUNICIPIO": "Santa Bárbara",
+        "UF": "MG",
+        "PROJETO": "Jequitinhonha",
+        "DATA_CADASTRO": 867369600000,
+    },
+    "geometry": {"x": -43.4153, "y": -19.9594},
+}
+AFLORAMENTO_CHEIO_2 = {
+    "attributes": {**AFLORAMENTO_CHEIO["attributes"], "ID_AFLORAMENTO": 74195,
+                   "TOPONIMIA": "Serra do Caraça, trilha da Cascatinha"},
+    "geometry": {"x": -43.4901, "y": -20.0972},
+}
+# `TIPO_AFLORAMENTO` é nulo em 35% da fonte; aqui só o ID vem preenchido.
+AFLORAMENTO_MAGRO = {
+    "attributes": {
+        "ID_AFLORAMENTO": 7,
+        "TOPONIMIA": None,
+        "TIPO_AFLORAMENTO": None,
+        "ROCHAS": None,
+        "MUNICIPIO": None,
+        "UF": None,
+        "PROJETO": None,
+        "DATA_CADASTRO": None,
+    }
+}
+OUTCROP_CHEIO = Cenario(features=[AFLORAMENTO_CHEIO, AFLORAMENTO_CHEIO_2], camada="afloramentos")
+OUTCROP_MAGRO = Cenario(features=[AFLORAMENTO_MAGRO], camada="afloramentos")
+OUTCROP_VAZIO = Cenario(features=[], camada="afloramentos")
+
+# Bbox de 1°×1° (o teto da tool de afloramentos) sobre o Quadrilátero
+# Ferrífero — o recorte medido em 2026-09-17 (8.572 pontos / 3,0 MB / 2,4 s).
+BBOX_1x1 = {"bbox_xmin": -44.5, "bbox_ymin": -20.5, "bbox_xmax": -43.5, "bbox_ymax": -19.5}
 
 class Portal:
     """Fonte falsa que responde pelo cenário e GRAVA cada requisição — é o
@@ -318,6 +363,52 @@ CASOS: list[Caso] = [
         {},
         {"count": 0, "substances": []},
     ),
+    Caso(
+        "get_geological_outcrops",
+        "cheio",
+        "dois achados com geometria por uf + municipio (igualdade), offset 1",
+        OUTCROP_CHEIO,
+        {"uf": "MG", "municipality": "Santa Bárbara", "limit": 10, "offset": 1},
+        {"count": 1, "total_count": 2, "offset": 1, "features.0.id": 74195,
+         "features.0.coordinates": {"lon": -43.4901, "lat": -20.0972},
+         "features.0.outcrop_type": "Lajedo ou Lajeiro",
+         "features.0.rocks": "Quartzito micáceo",
+         # Epoch em ms convertido para data ISO.
+         "features.0.registered_at": "1997-06-27",
+         # Município por IGUALDADE (LIKE pega vizinhos: 1.571 ≠ 1.333).
+         "provenance.dimension_key": {"where": "UF = 'MG' AND MUNICIPIO = 'Santa Bárbara'"}},
+        camada="afloramentos",
+    ),
+    Caso(
+        "get_geological_outcrops",
+        "cheio",
+        "achados por bbox de 1 grau quadrado, sem uf nem municipio",
+        OUTCROP_CHEIO,
+        {**BBOX_1x1, "limit": 5},
+        {"count": 2, "total_count": 2, "offset": 0, "features.0.id": 74194,
+         "features.0.coordinates": {"lon": -43.4153, "lat": -19.9594},
+         "provenance.dimension_key": {"where": "1=1", "geometry": "-44.5,-20.5,-43.5,-19.5"}},
+        camada="afloramentos",
+    ),
+    Caso(
+        "get_geological_outcrops",
+        "magro",
+        "registro só com ID, sete atributos nulos e sem geometria",
+        OUTCROP_MAGRO,
+        {"uf": "PA", "municipality": "São Félix do Xingu"},
+        {"count": 1, "features.0.id": 7, "features.0.outcrop_type": None,
+         "features.0.registered_at": None, "features.0.coordinates": None},
+        camada="afloramentos",
+    ),
+    Caso(
+        "get_geological_outcrops",
+        "magro",
+        "municipio sem acento: zero achado (features vazio, total_count zero)",
+        OUTCROP_VAZIO,
+        {"uf": "MG", "municipality": "Santa Barbara", "offset": 3},
+        {"count": 0, "total_count": 0, "offset": 3, "features": []},
+        camada="afloramentos",
+    ),
 ]
 
 
@@ -468,7 +559,8 @@ async def test_limite_de_resultados_e_imposto(portal):
     portal(CHEIO)
     async with conectar() as cliente:
         tools = {t.name: t for t in (await cliente.list_tools()).tools}
-        for nome in ("search_mineral_occurrences", "search_rare_earth_occurrences"):
+        for nome in ("search_mineral_occurrences", "search_rare_earth_occurrences",
+                     "get_geological_outcrops"):
             limite = tools[nome].input_schema["properties"]["limit"]
             assert (limite.get("minimum"), limite.get("maximum")) == (1, 1000), nome
         offset = tools["search_mineral_occurrences"].input_schema["properties"]["offset"]
@@ -492,7 +584,8 @@ async def test_uf_e_validada_no_esquema(portal):
     portal(CHEIO)
     async with conectar() as cliente:
         tools = {t.name: t for t in (await cliente.list_tools()).tools}
-        for nome in ("search_mineral_occurrences", "search_rare_earth_occurrences"):
+        for nome in ("search_mineral_occurrences", "search_rare_earth_occurrences",
+                     "get_geological_outcrops"):
             uf = tools[nome].input_schema["properties"]["uf"]
             ramos = uf.get("anyOf", [uf])
             enums = [r["enum"] for r in ramos if "enum" in r]
@@ -544,7 +637,9 @@ async def test_toda_resposta_carrega_proveniencia(caso: Caso, portal):
     if "occurrence_id" in caso.args:
         assert where == f"ID_OCORRENCIA = {caso.args['occurrence_id']}"
     if "bbox_xmin" in caso.args:
-        assert bloco["dimension_key"]["geometry"] == "-47.5,-20.5,-46.0,-19.0"
+        a = caso.args
+        esperada = f"{a['bbox_xmin']},{a['bbox_ymin']},{a['bbox_xmax']},{a['bbox_ymax']}"
+        assert bloco["dimension_key"]["geometry"] == esperada
         assert httpx.URL(bloco["source_url"]).params["geometryType"] == "esriGeometryEnvelope"
     else:
         assert "geometry" not in bloco["dimension_key"]
@@ -661,14 +756,25 @@ async def test_lista_de_substancias_concorrente_paga_uma_ida_so(portal):
     assert marcas == [False, True]
 
 
-@pytest.mark.parametrize("tool", ["search_mineral_occurrences", "search_rare_earth_occurrences"])
-async def test_bbox_incompleto_ou_invertido_e_recusado_antes_da_fonte(portal, tool):
+@pytest.mark.parametrize(
+    "tool, cenario, quatro",
+    [
+        ("search_mineral_occurrences", CHEIO,
+         {"bbox_xmin": -47.5, "bbox_ymin": -20.5, "bbox_xmax": -46.0, "bbox_ymax": -19.0}),
+        ("search_rare_earth_occurrences", CHEIO,
+         {"bbox_xmin": -47.5, "bbox_ymin": -20.5, "bbox_xmax": -46.0, "bbox_ymax": -19.0}),
+        # Afloramentos tem teto de 1 grau²: o bbox "certo" é o de 1°×1°.
+        ("get_geological_outcrops", OUTCROP_CHEIO, BBOX_1x1),
+    ],
+    ids=["search_mineral_occurrences", "search_rare_earth_occurrences", "get_geological_outcrops"],
+)
+async def test_bbox_incompleto_ou_invertido_e_recusado_antes_da_fonte(portal, tool, cenario, quatro):
     """Até 2026-09-17 três cantos e um vazio viravam "sem bbox" em silêncio
     (a busca ignorava a área e devolvia a UF inteira como resposta) e
     `xmin > xmax` ia ao portal. Agora a recusa é na borda, nomeando o que
     faltou ou o que está invertido, e o portal não é tocado."""
-    fonte = portal(CHEIO)
-    quatro = {"bbox_xmin": -47.5, "bbox_ymin": -20.5, "bbox_xmax": -46.0, "bbox_ymax": -19.0}
+    fonte = portal(cenario)
+    geometria = ",".join(str(quatro[k]) for k in ("bbox_xmin", "bbox_ymin", "bbox_xmax", "bbox_ymax"))
     async with conectar() as cliente:
         tres = await cliente.call_tool(tool, {k: v for k, v in quatro.items() if k != "bbox_ymax"})
         assert tres.is_error and "bbox_ymax" in tres.content[0].text, tres.content[0].text
@@ -676,7 +782,7 @@ async def test_bbox_incompleto_ou_invertido_e_recusado_antes_da_fonte(portal, to
         assert um.is_error and "bbox_ymin, bbox_xmax, bbox_ymax" in um.content[0].text
         invertido = await cliente.call_tool(tool, {**quatro, "bbox_xmin": -46.0, "bbox_xmax": -47.5})
         assert invertido.is_error and "invertido" in invertido.content[0].text
-        vazio = await cliente.call_tool(tool, {**quatro, "bbox_ymin": -19.0})
+        vazio = await cliente.call_tool(tool, {**quatro, "bbox_ymin": quatro["bbox_ymax"]})
         assert vazio.is_error and "invertido" in vazio.content[0].text
         fora = await cliente.call_tool(tool, {**quatro, "bbox_ymin": -95.0})
         assert fora.is_error and "bbox_ymin=-95.0" in fora.content[0].text
@@ -684,8 +790,12 @@ async def test_bbox_incompleto_ou_invertido_e_recusado_antes_da_fonte(portal, to
 
         certo = await cliente.call_tool(tool, {**quatro, "limit": 1})
         assert not certo.is_error, certo.content[0].text
-        assert fonte.requisicoes[-1].url.params["geometry"] == "-47.5,-20.5,-46.0,-19.0"
-        nenhum = await cliente.call_tool(tool, {"uf": "MG", "limit": 1})
+        assert fonte.requisicoes[-1].url.params["geometry"] == geometria
+        # Sem bbox: afloramentos exige uf + municipality; as outras aceitam só uf.
+        sem_bbox = {"uf": "MG", "limit": 1}
+        if tool == "get_geological_outcrops":
+            sem_bbox["municipality"] = "Santa Bárbara"
+        nenhum = await cliente.call_tool(tool, sem_bbox)
         assert not nenhum.is_error
         assert "geometry" not in fonte.requisicoes[-1].url.params
 
@@ -714,3 +824,82 @@ async def test_rochas_relacionadas_e_opt_in(portal):
     assert "ROCHAS_HOSPEDEIRAS" not in where_sem
     assert all(f"ROCHAS_HOSPEDEIRAS LIKE '%{r}%'" in where_com for r in REE_HOST_ROCKS)
     assert sem.structured_content["search_terms_used"] == list(REE_SEARCH_TERMS)
+
+
+# ---------------------------------------------------------------------------
+# Sessão 3 (2026-09-17, 0.6.0): afloramentos — filtro obrigatório na borda
+# ---------------------------------------------------------------------------
+
+
+async def test_afloramentos_exigem_filtro_antes_da_fonte(portal):
+    """A camada tem 360.042 pontos, a fonte não pagina e só corta sem filtro
+    nenhum (300.000, `exceededTransferLimit`): sem filtro a tool baixaria a
+    camada inteira cortada e a chamaria de resposta. A recusa é na borda —
+    sem filtro, só uf, só municipality, ou bbox acima de 1 grau quadrado —
+    nomeando o que faltou, e o portal não é tocado."""
+    fonte = portal(OUTCROP_CHEIO)
+    async with conectar() as cliente:
+        nada = await cliente.call_tool("get_geological_outcrops", {})
+        assert nada.is_error and "360.042" in nada.content[0].text
+        assert "uf e municipality" in nada.content[0].text
+        so_uf = await cliente.call_tool("get_geological_outcrops", {"uf": "MG"})
+        assert so_uf.is_error and "faltou municipality" in so_uf.content[0].text
+        so_mun = await cliente.call_tool("get_geological_outcrops", {"municipality": "Santa Bárbara"})
+        assert so_mun.is_error and "faltou uf" in so_mun.content[0].text
+        # 2°×2° = 4 graus² (22.042 pontos / 7,9 MB na região mais densa).
+        grande = await cliente.call_tool(
+            "get_geological_outcrops",
+            {"bbox_xmin": -45.0, "bbox_ymin": -21.0, "bbox_xmax": -43.0, "bbox_ymax": -19.0},
+        )
+        assert grande.is_error, grande.content[0].text
+        assert "grande demais" in grande.content[0].text
+        assert "4 graus quadrados" in grande.content[0].text
+        assert f"teto é {OUTCROP_BBOX_MAX_DEG2:g}" in grande.content[0].text
+        # Um fio acima do teto também recusa; o teto exato passa.
+        acima = await cliente.call_tool(
+            "get_geological_outcrops", {**BBOX_1x1, "bbox_xmax": BBOX_1x1["bbox_xmax"] + 0.01}
+        )
+        assert acima.is_error and "grande demais" in acima.content[0].text
+        assert fonte.requisicoes == [], "chamada sem filtro válido chegou ao portal"
+
+        no_teto = await cliente.call_tool("get_geological_outcrops", BBOX_1x1)
+        assert not no_teto.is_error, no_teto.content[0].text
+        # uf + municipality podem combinar com o bbox.
+        combinado = await cliente.call_tool(
+            "get_geological_outcrops", {**BBOX_1x1, "uf": "MG", "municipality": "Santa Bárbara"}
+        )
+        assert not combinado.is_error
+        params = fonte.requisicoes[-1].url.params
+        assert params["where"] == "UF = 'MG' AND MUNICIPIO = 'Santa Bárbara'"
+        assert params["geometry"] == "-44.5,-20.5,-43.5,-19.5"
+        assert len(fonte.requisicoes) == 2
+
+
+async def test_afloramentos_uma_ida_so_com_os_campos_da_resposta(portal):
+    """Como as buscas de ocorrências: uma requisição, `outFields` explícito
+    (constants.OUTCROP_FIELDS, sem `DESCRICAO`, que quase dobra a resposta),
+    geometria pedida, sem `returnCountOnly` (dá 400 nesta camada com
+    geometria) e `total_count` igual ao que a query devolveu. Município por
+    igualdade, com aspas escapadas."""
+    fonte = portal(OUTCROP_CHEIO)
+    async with conectar() as cliente:
+        resultado = await cliente.call_tool(
+            "get_geological_outcrops", {"uf": "MG", "municipality": "Santana d'Água", "limit": 1}
+        )
+    assert not resultado.is_error, resultado.content[0].text
+    assert len(fonte.requisicoes) == 1
+    params = fonte.requisicoes[0].url.params
+    assert params["outFields"] == ",".join(OUTCROP_FIELDS)
+    assert "DESCRICAO" not in OUTCROP_FIELDS
+    assert params["returnGeometry"] == "true" and "returnCountOnly" not in params
+    assert params["where"] == "UF = 'MG' AND MUNICIPIO = 'Santana d''Água'"
+    assert resultado.structured_content["total_count"] == len(OUTCROP_CHEIO.features)
+    assert resultado.structured_content["count"] == 1
+
+
+def test_data_de_cadastro_converte_epoch_em_ms():
+    """`DATA_CADASTRO` chega como esriFieldTypeDate (epoch em milissegundos,
+    UTC): 867369600000 é 1997-06-27; nulo fica nulo."""
+    assert outcrops_module.registered_at_iso(867369600000) == "1997-06-27"
+    assert outcrops_module.registered_at_iso(0) == "1970-01-01"
+    assert outcrops_module.registered_at_iso(None) is None

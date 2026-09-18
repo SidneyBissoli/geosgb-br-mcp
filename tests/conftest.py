@@ -1,19 +1,21 @@
 """Separa a suíte OFFLINE (roda a cada push) da suíte VIVA (bate no geoportal).
 
-`test_client.py` e `test_tools_occurrences.py` consultam o portal real do SGB:
-servem como vigília, não como gate — um portal lento ou fora do ar não pode
-derrubar um push. Ficam atrás do mesmo interruptor que
-`test_endpoints_contract.py` já usa: `INTEGRATION_TESTS=1`.
+`test_client.py`, `test_tools_occurrences.py` e `test_tools_outcrops.py`
+consultam o portal real do SGB: servem como vigília, não como gate — um
+portal lento ou fora do ar não pode derrubar um push. Ficam atrás do mesmo
+interruptor que `test_endpoints_contract.py` já usa: `INTEGRATION_TESTS=1`.
 
 Sem a variável, `pytest` roda só o que não toca a rede: modelos e o contrato
 de saída (`test_output_contract.py`, que tem sua própria fonte falsa).
+
+A lista é EXPLÍCITA: módulo vivo novo que não entrar aqui roda no CI offline.
 """
 
 import os
 
 import pytest
 
-LIVE_MODULES = {"test_client.py", "test_tools_occurrences.py"}
+LIVE_MODULES = {"test_client.py", "test_tools_occurrences.py", "test_tools_outcrops.py"}
 
 
 def pytest_collection_modifyitems(config, items):

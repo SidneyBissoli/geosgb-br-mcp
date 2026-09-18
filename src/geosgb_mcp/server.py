@@ -6,6 +6,7 @@ Este servidor expõe tools para consultar:
 - Busca específica de Elementos Terras Raras (ETRs)
 - Detalhes de ocorrências
 - Lista de substâncias minerais
+- Afloramentos geológicos (desde 0.6.0)
 """
 
 from typing import Annotated
@@ -14,10 +15,11 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
-from .constants import DEFAULT_LIMIT, MAX_LIMIT, UF
+from .constants import DEFAULT_LIMIT, MAX_LIMIT, OUTCROP_BBOX_MAX_DEG2, UF
 from .models import (
     OccurrenceDetails,
     OccurrenceSearchResult,
+    OutcropSearchResult,
     RareEarthSearchResult,
     SubstanceList,
 )
@@ -26,10 +28,13 @@ from .models import (
 # `instructions=` no construtor). Até 2026-09-17 o servidor subia sem ele;
 # os irmãos (uis, ilo, bcb) publicam um. O gate confere que cita cada tool.
 INSTRUCTIONS = (
-    "Ocorrências minerais do Brasil a partir do GeoSGB, o geoportal do Serviço "
-    "Geológico do Brasil (SGB/CPRM): a camada \"Ocorrências minerais\" "
-    "(36.484 registros em 2026-09-17), com substâncias, status econômico, rochas "
-    "hospedeiras, província, UF, município e coordenadas. "
+    "Ocorrências minerais e afloramentos geológicos do Brasil a partir do GeoSGB, "
+    "o geoportal do Serviço Geológico do Brasil (SGB/CPRM): a camada "
+    "\"Ocorrências minerais\" (36.484 registros em 2026-09-17), com substâncias, "
+    "status econômico, rochas hospedeiras, província, UF, município e coordenadas; "
+    "e a camada \"Afloramentos geológicos\" (360.042 pontos em 2026-09-17), com "
+    "toponímia, tipo de afloramento, rochas, município, UF, projeto, data de "
+    "cadastro e coordenadas. "
     "Qual tool para qual pergunta: search_mineral_occurrences filtra por substância, "
     "UF, município, status econômico e/ou retângulo geográfico (bbox em WGS84); "
     "search_rare_earth_occurrences é a busca pronta de terras raras (ETR) por "
@@ -39,23 +44,30 @@ INSTRUCTIONS = (
     "get_occurrence_details traz o registro completo de UMA ocorrência pelo id; "
     "list_mineral_substances lista os nomes de substância exatamente como a fonte "
     "os grava (a primeira chamada baixa a camada inteira, ~20 s; as seguintes "
-    "saem de um cache válido por 24 h, e provenance.served_from_cache diz qual foi). "
+    "saem de um cache válido por 24 h, e provenance.served_from_cache diz qual foi); "
+    "get_geological_outcrops lista afloramentos (pontos de observação de rocha "
+    "em campo, não ocorrências minerais) e EXIGE filtro: uf + municipality juntos, "
+    "ou um bbox de até 1 grau quadrado — sem isso recusa antes de ir à fonte. "
     "Como preencher: uf é a sigla em MAIÚSCULAS (\"MG\", não \"mg\" nem \"Minas\"); "
     "economic_status aceita exatamente \"Mina\", \"Garimpo\", \"Indeterminado\" ou "
     "\"Não explotado\" (valores medidos na fonte em 2026-09-17; não existe "
-    "\"Ocorrência\"); substance e municipality casam por LIKE sensível a caixa e "
-    "acento — use a grafia da fonte (\"Nióbio\", não \"Niobio\"; "
-    "\"Terras raras\"), que list_mineral_substances devolve. "
+    "\"Ocorrência\"); em search_mineral_occurrences, substance e municipality "
+    "casam por LIKE sensível a caixa e acento — use a grafia da fonte (\"Nióbio\", "
+    "não \"Niobio\"; \"Terras raras\"), que list_mineral_substances devolve; em "
+    "get_geological_outcrops, municipality é IGUALDADE exata com a grafia da fonte "
+    "(\"Santa Bárbara\" acha 1.333 pontos; \"Santa Barbara\" acha zero). "
     "Custo: o portal não pagina, então toda busca baixa tudo o que casa e corta "
-    "no cliente — uma UF inteira (MG, 7.562 registros) leva ~4 s; filtre por "
-    "substância ou bbox quando puder. O bbox exige os quatro cantos "
-    "(bbox_xmin < bbox_xmax, bbox_ymin < bbox_ymax, em graus WGS84) ou nenhum; "
-    "incompleto ou invertido é recusado antes de ir à fonte. "
+    "no cliente — uma UF inteira de ocorrências (MG, 7.562 registros) leva ~4 s; "
+    "filtre por substância ou bbox quando puder. Em afloramentos o maior município "
+    "(São Félix do Xingu/PA) tem 3.000 pontos e um bbox de 1 grau quadrado na região "
+    "mais densa (Quadrilátero Ferrífero, MG) traz 8.572 pontos (3 MB) em ~3,5 s. O bbox "
+    "exige os quatro cantos (bbox_xmin < bbox_xmax, bbox_ymin < bbox_ymax, em graus "
+    "WGS84) ou nenhum; incompleto ou invertido é recusado antes de ir à fonte. "
     "Toda resposta traz um bloco provenance (URL da camada, WHERE efetiva, "
     "instante da extração em UTC); ao citar, use \"Fonte: Serviço Geológico do "
     "Brasil (SGB/CPRM) — GeoSGB\". "
-    "Não use este servidor para afloramentos, litoestratigrafia ou geoquímica "
-    "(camadas não servidas), nem para dados fora do Brasil."
+    "Não use este servidor para litoestratigrafia ou geoquímica (camadas não "
+    "servidas), nem para dados fora do Brasil."
 )
 
 # SDK 2.x (migrado em 2026-09-17): `FastMCP` virou `MCPServer`. O decorador
@@ -109,6 +121,22 @@ def _bbox(
             f"({xmax}) e bbox_ymin ({ymin}) menor que bbox_ymax ({ymax})"
         )
     return (xmin, ymin, xmax, ymax)
+
+
+def _bbox_area_max(bbox: tuple[float, float, float, float], teto: float) -> None:
+    """Recusa, na borda, bbox maior que `teto` graus quadrados — para camada
+    em que a fonte não pagina e o recorte é o que segura a resposta
+    (afloramentos: 360.042 pontos; 1°×1° na região mais densa são 8.572
+    pontos / 3,0 MB / 2,4 s, 2°×2° já 22.042 / 7,9 MB, medido em 2026-09-17).
+    A mensagem diz a área pedida e o teto; o portal não é tocado."""
+    xmin, ymin, xmax, ymax = bbox
+    area = (xmax - xmin) * (ymax - ymin)
+    if area > teto:
+        raise ToolError(
+            f"bbox grande demais: {area:g} graus quadrados "
+            f"({xmax - xmin:g}° × {ymax - ymin:g}°); o teto é {teto:g} — "
+            "reduza o retângulo ou filtre por uf + municipality"
+        )
 
 
 @mcp.tool()
@@ -275,6 +303,79 @@ async def list_mineral_substances() -> SubstanceList:
     from .tools.occurrences import list_mineral_substances as _list_substances
 
     return await _list_substances()
+
+
+@mcp.tool()
+async def get_geological_outcrops(
+    uf: UF | None = None,
+    municipality: str | None = None,
+    bbox_xmin: float | None = None,
+    bbox_ymin: float | None = None,
+    bbox_xmax: float | None = None,
+    bbox_ymax: float | None = None,
+    limit: Annotated[int, Field(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
+    offset: Annotated[int, Field(ge=0)] = 0,
+) -> OutcropSearchResult:
+    """
+    Lista afloramentos geológicos (pontos de observação de rocha em campo) do
+    banco de dados do Serviço Geológico do Brasil — camada "Afloramentos
+    geológicos", 360.042 pontos em 3.540 municípios (2026-09-17). Não são
+    ocorrências minerais: para essas, use search_mineral_occurrences.
+
+    Filtro OBRIGATÓRIO, um dos dois:
+    - uf + municipality juntos (município por igualdade exata, com a grafia
+      da fonte: "Santa Bárbara" acha 1.333 pontos; "Santa Barbara" acha zero);
+    - bbox de até 1 grau quadrado (os quatro cantos, em graus WGS84).
+    Sem filtro, só uf, só municipality ou bbox acima do teto: recusado antes
+    de ir à fonte. uf e municipality podem combinar com o bbox.
+
+    Args:
+        uf: Sigla da unidade da federação, em maiúsculas (ex: "MG", "PA")
+        municipality: Nome do município exatamente como a fonte grava
+            (sensível a caixa e acento)
+        bbox_xmin: Longitude mínima do bounding box (WGS84). Os quatro cantos
+            vêm juntos ou nenhum; incompleto, invertido ou maior que 1 grau
+            quadrado é recusado.
+        bbox_ymin: Latitude mínima do bounding box (WGS84)
+        bbox_xmax: Longitude máxima do bounding box (WGS84)
+        bbox_ymax: Latitude máxima do bounding box (WGS84)
+        limit: Número máximo de resultados (default: 100, máximo: 1000)
+        offset: Offset para paginação
+
+    Returns:
+        Dicionário contendo:
+        - count: número de resultados retornados
+        - total_count: total de afloramentos que atendem ao filtro
+        - features: lista de afloramentos (id, toponímia, tipo, rochas, UF,
+          município, projeto, data de cadastro em YYYY-MM-DD, coordenadas)
+
+    Custo (medido pela tool em 2026-09-17): a fonte não pagina — a busca
+    baixa tudo que casa (8 campos + coordenadas) e corta no cliente. Santa
+    Bárbara/MG: 1.333 pontos, 0,5 MB, ~0,8 s; o maior município (São Félix
+    do Xingu/PA): 3.000 pontos, 1,2 MB, ~1,8 s; bbox de 1°×1° na região mais
+    densa (Quadrilátero Ferrífero, MG): 8.572 pontos, 3,0 MB, ~3,5 s.
+    """
+    from .tools.outcrops import search_geological_outcrops as _search
+
+    bbox = _bbox(bbox_xmin, bbox_ymin, bbox_xmax, bbox_ymax)
+    if bbox is None:
+        if not (uf and municipality):
+            faltou = "municipality" if uf else "uf" if municipality else "uf e municipality"
+            raise ToolError(
+                "get_geological_outcrops exige filtro: a camada tem 360.042 pontos e a "
+                f"fonte não pagina. Informe uf E municipality (faltou {faltou}) ou um "
+                f"bbox de até {OUTCROP_BBOX_MAX_DEG2:g} grau quadrado"
+            )
+    else:
+        _bbox_area_max(bbox, OUTCROP_BBOX_MAX_DEG2)
+
+    return await _search(
+        uf=uf,
+        municipality=municipality,
+        bbox=bbox,
+        limit=limit,
+        offset=offset,
+    )
 
 
 def _forbid_unknown_arguments(server: MCPServer) -> None:
