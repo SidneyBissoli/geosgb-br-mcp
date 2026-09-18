@@ -70,15 +70,24 @@ def query_url(
     endpoint_key: str,
     where: str,
     geometry: tuple[float, float, float, float] | None = None,
+    point: tuple[float, float] | None = None,
 ) -> str:
     """URL canônica que reproduz a consulta: o `/query` da camada com a WHERE
-    efetiva e o envelope, quando houver, em `f=json`. Só o que muda o
-    RESULTADO entra; `outFields`/`returnGeometry` são forma, não recorte."""
+    efetiva e o recorte espacial, quando houver — envelope (`geometry`) ou
+    ponto (`point`, desde 0.7.0; os mesmos parâmetros que client.query()
+    manda) — em `f=json`. Só o que muda o RESULTADO entra;
+    `outFields`/`returnGeometry` são forma, não recorte."""
     params: dict[str, Any] = {"where": where, "f": "json"}
     if geometry:
         xmin, ymin, xmax, ymax = geometry
         params["geometry"] = f"{xmin},{ymin},{xmax},{ymax}"
         params["geometryType"] = "esriGeometryEnvelope"
+        params["spatialRel"] = "esriSpatialRelIntersects"
+        params["inSR"] = "4326"
+    elif point:
+        lon, lat = point
+        params["geometry"] = f"{lon},{lat}"
+        params["geometryType"] = "esriGeometryPoint"
         params["spatialRel"] = "esriSpatialRelIntersects"
         params["inSR"] = "4326"
     return f"{layer_url(endpoint_key)}/query?{urlencode(params)}"
@@ -90,24 +99,42 @@ def build_provenance(
     geometry: tuple[float, float, float, float] | None = None,
     retrieved_at: str | None = None,
     served_from_cache: bool = False,
+    point: tuple[float, float] | None = None,
+    derived: bool = False,
+    derivation_note: str | None = None,
 ) -> dict[str, Any]:
     """Bloco canônico para UMA ida à camada `endpoint_key` (de `constants.LAYERS`).
 
     `where` é a cláusula EFETIVA que foi ao portal; `geometry` o envelope, se
-    houve; `retrieved_at` o instante real da extração (default: agora — as
-    buscas chamam logo após a resposta do portal). `served_from_cache` é True
-    só quando a resposta saiu do cache em processo (desde 2026-09-17, apenas
+    houve, ou `point` o ponto (lon, lat), se o recorte foi por ponto (desde
+    0.7.0; o ponto entra em `dimension_key.geometry` com
+    `dimension_key.geometry_type = "point"` — o envelope segue sem essa
+    chave, para o bloco de ocorrências continuar byte a byte igual);
+    `retrieved_at` o instante real da extração (default: agora — as buscas
+    chamam logo após a resposta do portal). `served_from_cache` é True só
+    quando a resposta saiu do cache em processo (desde 2026-09-17, apenas
     `list_mineral_substances`), e então `retrieved_at` é o instante da ida
-    ORIGINAL ao portal, não o de agora — é o que o contrato manda. A ordem
-    das chaves é a do contrato e é parte dele.
+    ORIGINAL ao portal, não o de agora — é o que o contrato manda.
+    `derived=True` com `derivation_note` marca resposta que NÃO é a fonte
+    crua (desde 0.7.0, `get_lithology_by_area`: agregação por unidade no
+    cliente); as demais tools devolvem o que a fonte devolveu, recortado. A
+    ordem das chaves é a do contrato e é parte dele.
     """
+    if geometry and point:
+        raise ValueError("build_provenance(): `geometry` e `point` são exclusivos")
+    if derived and not derivation_note:
+        raise ValueError("build_provenance(): `derived=True` exige `derivation_note`")
     camada = layer(endpoint_key)
     retrieved = retrieved_at or now_utc_iso()
-    source_url = query_url(endpoint_key, where, geometry)
+    source_url = query_url(endpoint_key, where, geometry, point)
     dimension_key: dict[str, str] = {"where": where}
     if geometry:
         xmin, ymin, xmax, ymax = geometry
         dimension_key["geometry"] = f"{xmin},{ymin},{xmax},{ymax}"
+    elif point:
+        lon, lat = point
+        dimension_key["geometry"] = f"{lon},{lat}"
+        dimension_key["geometry_type"] = "point"
     return {
         "contract_version": CONTRACT_VERSION,
         "source": {
@@ -143,8 +170,8 @@ def build_provenance(
             "possuir Plano de Dados Abertos por estar fora do escopo do Decreto "
             "nº 8.777/2016.",
         ],
-        "derived": False,
-        "derivation_note": None,
+        "derived": derived,
+        "derivation_note": derivation_note if derived else None,
         "served_from_cache": served_from_cache,
         "field_sources": None,
     }

@@ -34,11 +34,11 @@ jobs:
         run: pip install -e .[dev]
 
       # Fumaça do import: é o que o cron semanal nunca fez. O número é o de
-      # tools publicadas (5 desde 0.6.0, com get_geological_outcrops) — tool
+      # tools publicadas (6 desde 0.7.0, com get_lithology_by_area) — tool
       # nova ou removida tem de mexer aqui de propósito.
-      - name: Server imports and lists 5 tools
+      - name: Server imports and lists 6 tools
         run: |
-          python -c "from geosgb_mcp.server import mcp; n=len(mcp._tool_manager.list_tools()); assert n == 5, n; print(n, 'tools')"
+          python -c "from geosgb_mcp.server import mcp; n=len(mcp._tool_manager.list_tools()); assert n == 6, n; print(n, 'tools')"
 
       - name: Offline suite (models + output contract)
         run: pytest -v

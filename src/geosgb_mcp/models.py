@@ -201,3 +201,59 @@ class OutcropSearchResult(BaseModel):
     provenance: Provenance
     # Lista canônica de `source_url` distintas (RFC attribution do MCP).
     attribution: list[str]
+
+
+class LithologyUnit(BaseModel):
+    """Uma unidade litoestratigráfica em `get_lithology_by_area` (desde 0.7.0).
+
+    NÃO é um registro da fonte: é a agregação, no cliente, dos polígonos da
+    camada "Unidades litoestratigráficas - 1:1.000.000 [2004]" que têm a
+    mesma `SIGLA` (`code`) e intersectam o recorte (constants.LITHOLOGY_FIELDS).
+    Os atributos descritivos vêm do primeiro polígono da unidade lido (são
+    iguais entre polígonos da mesma sigla na fonte). `polygon_count` é
+    quantos polígonos entraram; `area_deg2` é a soma de `SHAPE.AREA` desses
+    polígonos INTEIROS, em graus quadrados (a fonte é WGS84), não a parte
+    deles dentro do recorte — nulo quando nenhum trouxe área. `code` é nulo
+    quando a fonte devolve `SIGLA` nula: esses polígonos agregam numa
+    unidade sem sigla em vez de sumir, para `polygon_count` somar o total.
+    Idades em milhões de anos (Ma); `system_*`/`epoch_*` são nulos em um
+    terço a metade dos polígonos (medido em 2026-09-17).
+    """
+
+    code: Optional[str]
+    name: Optional[str]
+    hierarchy: Optional[str]
+    parent_code: Optional[str]
+    parent_name: Optional[str]
+    lithotypes: Optional[str]
+    age_min_ma: Optional[float]
+    age_max_ma: Optional[float]
+    eon_min: Optional[str]
+    eon_max: Optional[str]
+    era_min: Optional[str]
+    era_max: Optional[str]
+    system_min: Optional[str]
+    system_max: Optional[str]
+    epoch_min: Optional[str]
+    epoch_max: Optional[str]
+    polygon_count: int
+    area_deg2: Optional[float]
+
+
+class LithologySearchResult(BaseModel):
+    """Resposta de `get_lithology_by_area`.
+
+    `count`/`total_count`/`offset` contam UNIDADES (o que a lista traz);
+    `polygon_count` é o total de polígonos lidos da fonte antes da agregação
+    (a soma dos `polygon_count` das unidades, antes do corte de `limit`).
+    `provenance.derived` é True: a resposta é derivada, não a fonte crua.
+    """
+
+    count: int
+    total_count: int
+    offset: int
+    polygon_count: int
+    units: list[LithologyUnit]
+    provenance: Provenance
+    # Lista canônica de `source_url` distintas (RFC attribution do MCP).
+    attribution: list[str]

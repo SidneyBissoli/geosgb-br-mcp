@@ -1,6 +1,7 @@
 """Separa a suíte OFFLINE (roda a cada push) da suíte VIVA (bate no geoportal).
 
-`test_client.py`, `test_tools_occurrences.py` e `test_tools_outcrops.py`
+`test_client.py`, `test_tools_occurrences.py`, `test_tools_outcrops.py` e
+`test_tools_lithology.py`
 consultam o portal real do SGB: servem como vigília, não como gate — um
 portal lento ou fora do ar não pode derrubar um push. Ficam atrás do mesmo
 interruptor que `test_endpoints_contract.py` já usa: `INTEGRATION_TESTS=1`.
@@ -15,7 +16,12 @@ import os
 
 import pytest
 
-LIVE_MODULES = {"test_client.py", "test_tools_occurrences.py", "test_tools_outcrops.py"}
+LIVE_MODULES = {
+    "test_client.py",
+    "test_tools_occurrences.py",
+    "test_tools_outcrops.py",
+    "test_tools_lithology.py",
+}
 
 
 def pytest_collection_modifyitems(config, items):

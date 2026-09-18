@@ -36,6 +36,8 @@ from geosgb_mcp.constants import (
     BASE_URL,
     ENDPOINTS,
     LAYERS,
+    LITHOLOGY_BBOX_MAX_DEG2,
+    LITHOLOGY_FIELDS,
     OCCURRENCE_FIELDS,
     OUTCROP_BBOX_MAX_DEG2,
     OUTCROP_FIELDS,
@@ -46,6 +48,7 @@ from geosgb_mcp.constants import (
     UF_CODES,
 )
 from geosgb_mcp.provenance import layer_url
+from geosgb_mcp.tools import lithology as lithology_module
 from geosgb_mcp.tools import occurrences as occurrences_module
 from geosgb_mcp.tools import outcrops as outcrops_module
 
@@ -178,6 +181,69 @@ OUTCROP_VAZIO = Cenario(features=[], camada="afloramentos")
 # Bbox de 1°×1° (o teto da tool de afloramentos) sobre o Quadrilátero
 # Ferrífero — o recorte medido em 2026-09-17 (8.572 pontos / 3,0 MB / 2,4 s).
 BBOX_1x1 = {"bbox_xmin": -44.5, "bbox_ymin": -20.5, "bbox_xmax": -43.5, "bbox_ymax": -19.5}
+
+# Litoestratigrafia 1:1.000.000 (0.7.0, 2026-09-17): polígonos como a camada
+# devolve com os 17 campos de LITHOLOGY_FIELDS e SEM geometria. Dois
+# polígonos da MESMA sigla (A4PP1mic, Formação Cauê) provam a agregação:
+# polygon_count 2 e area_deg2 somada; o terceiro (NP3bsh) tem área maior e
+# vem primeiro. Os valores são os do 1°×1° medido (SHAPE.AREA em graus²).
+LITO_CAUE_1 = {
+    "attributes": {
+        "SIGLA": "A4PP1mic",
+        "HIERARQUIA": "Formação",
+        "NOME": "Formação Cauê",
+        "SIGLA_PAI": "A4PP1mi",
+        "NOME_PAI": "A4PP1mi - Grupo Itabira",
+        "LITOTIPOS": "Dolomito, Filito, Itabirito, Marga",
+        "IDADE_MIN": 2300.1,
+        "IDADE_MAX": 2800.0,
+        "EON_MIN": "Proterozóico",
+        "EON_MAX": "Arqueano",
+        "ERA_MIN": "Paleoproterozóico",
+        "ERA_MAX": "Neoarqueano",
+        "SISTEMA_MIN": "Sideriano",
+        "SISTEMA_MAX": None,
+        "EPOCA_MIN": None,
+        "EPOCA_MAX": None,
+        "SHAPE.AREA": 0.02,
+    }
+}
+LITO_CAUE_2 = {"attributes": {**LITO_CAUE_1["attributes"], "SHAPE.AREA": 0.03}}
+LITO_BAMBUI = {
+    "attributes": {
+        "SIGLA": "NP3bsh",
+        "HIERARQUIA": "Formação",
+        "NOME": "Formação Serra de Santa Helena",
+        "SIGLA_PAI": "NP3b",
+        "NOME_PAI": "NP3b - Grupo Bambuí",
+        "LITOTIPOS": "Argilito, Siltito, Arcóseo",
+        "IDADE_MIN": 541.0,
+        "IDADE_MAX": 1000.0,
+        "EON_MIN": "Proterozóico",
+        "EON_MAX": "Proterozóico",
+        "ERA_MIN": "Neoproterozóico",
+        "ERA_MAX": "Neoproterozóico",
+        "SISTEMA_MIN": "Ediacarano",
+        "SISTEMA_MAX": "Toniano",
+        "EPOCA_MIN": None,
+        "EPOCA_MAX": None,
+        "SHAPE.AREA": 1.5352569601235826,
+    }
+}
+# Polígono como a fonte pode devolvê-lo com o cadastro incompleto: SIGLA e
+# tudo o mais nulo, inclusive SHAPE.AREA — agrega numa unidade sem sigla.
+LITO_MAGRO_POLIGONO = {
+    "attributes": {campo: None for campo in LITHOLOGY_FIELDS}
+}
+LITO_CHEIO = Cenario(features=[LITO_CAUE_1, LITO_BAMBUI, LITO_CAUE_2], camada="litoestratigrafia_1m")
+LITO_MAGRO = Cenario(features=[LITO_MAGRO_POLIGONO], camada="litoestratigrafia_1m")
+LITO_VAZIO = Cenario(features=[], camada="litoestratigrafia_1m")
+
+# Bbox de 5°×5° = 25 graus² (o teto da tool de litoestratigrafia), medido em
+# 2026-09-17: 4.180 polígonos / 2,1 MB / 2,4 s sem geometria.
+BBOX_5x5 = {"bbox_xmin": -48.0, "bbox_ymin": -23.0, "bbox_xmax": -43.0, "bbox_ymax": -18.0}
+# Ponto no centro de Belo Horizonte: 1 polígono (A34bh) em 0,12 s.
+PONTO_BH = {"lon": -43.94, "lat": -19.92}
 
 class Portal:
     """Fonte falsa que responde pelo cenário e GRAVA cada requisição — é o
@@ -409,6 +475,60 @@ CASOS: list[Caso] = [
         {"count": 0, "total_count": 0, "offset": 3, "features": []},
         camada="afloramentos",
     ),
+    Caso(
+        "get_lithology_by_area",
+        "cheio",
+        "tres poligonos em duas unidades por bbox no teto (25 graus2), ordem por area",
+        LITO_CHEIO,
+        {**BBOX_5x5, "limit": 10},
+        # Três polígonos, duas siglas: total_count conta UNIDADES; a de maior
+        # área somada vem primeiro; os dois da Formação Cauê viram um só, com
+        # polygon_count 2 e a área somada (0,02 + 0,03).
+        {"count": 2, "total_count": 2, "offset": 0, "polygon_count": 3,
+         "units.0.code": "NP3bsh", "units.0.polygon_count": 1,
+         "units.0.area_deg2": 1.5352569601235826,
+         "units.1.code": "A4PP1mic", "units.1.name": "Formação Cauê",
+         "units.1.polygon_count": 2, "units.1.area_deg2": 0.05,
+         "units.1.parent_code": "A4PP1mi", "units.1.age_max_ma": 2800.0,
+         "units.1.system_max": None,
+         "provenance.derived": True,
+         "provenance.dimension_key": {"where": "1=1", "geometry": "-48.0,-23.0,-43.0,-18.0"}},
+        camada="litoestratigrafia_1m",
+    ),
+    Caso(
+        "get_lithology_by_area",
+        "cheio",
+        "por ponto (lon + lat), offset 1: a segunda unidade",
+        LITO_CHEIO,
+        {**PONTO_BH, "offset": 1},
+        {"count": 1, "total_count": 2, "offset": 1, "polygon_count": 3,
+         "units.0.code": "A4PP1mic", "units.0.polygon_count": 2,
+         # Ponto na proveniência: geometry "lon,lat" + geometry_type.
+         "provenance.dimension_key": {"where": "1=1", "geometry": "-43.94,-19.92",
+                                      "geometry_type": "point"}},
+        camada="litoestratigrafia_1m",
+    ),
+    Caso(
+        "get_lithology_by_area",
+        "magro",
+        "poligono com SIGLA e tudo nulo, SHAPE.AREA nulo: uma unidade sem sigla",
+        LITO_MAGRO,
+        PONTO_BH,
+        {"count": 1, "total_count": 1, "polygon_count": 1,
+         "units.0.code": None, "units.0.name": None, "units.0.age_min_ma": None,
+         "units.0.polygon_count": 1, "units.0.area_deg2": None,
+         "provenance.derived": True},
+        camada="litoestratigrafia_1m",
+    ),
+    Caso(
+        "get_lithology_by_area",
+        "magro",
+        "ponto no mar: nenhuma unidade (units vazio, total_count zero)",
+        LITO_VAZIO,
+        {"lon": -30.0, "lat": -20.0, "offset": 2},
+        {"count": 0, "total_count": 0, "offset": 2, "polygon_count": 0, "units": []},
+        camada="litoestratigrafia_1m",
+    ),
 ]
 
 
@@ -560,7 +680,7 @@ async def test_limite_de_resultados_e_imposto(portal):
     async with conectar() as cliente:
         tools = {t.name: t for t in (await cliente.list_tools()).tools}
         for nome in ("search_mineral_occurrences", "search_rare_earth_occurrences",
-                     "get_geological_outcrops"):
+                     "get_geological_outcrops", "get_lithology_by_area"):
             limite = tools[nome].input_schema["properties"]["limit"]
             assert (limite.get("minimum"), limite.get("maximum")) == (1, 1000), nome
         offset = tools["search_mineral_occurrences"].input_schema["properties"]["offset"]
@@ -640,9 +760,25 @@ async def test_toda_resposta_carrega_proveniencia(caso: Caso, portal):
         a = caso.args
         esperada = f"{a['bbox_xmin']},{a['bbox_ymin']},{a['bbox_xmax']},{a['bbox_ymax']}"
         assert bloco["dimension_key"]["geometry"] == esperada
+        assert "geometry_type" not in bloco["dimension_key"]
         assert httpx.URL(bloco["source_url"]).params["geometryType"] == "esriGeometryEnvelope"
+    elif "lon" in caso.args:
+        # Recorte por ponto (0.7.0): "lon,lat" + geometry_type, e a URL
+        # reproduz o ponto com esriGeometryPoint.
+        assert bloco["dimension_key"]["geometry"] == f"{caso.args['lon']},{caso.args['lat']}"
+        assert bloco["dimension_key"]["geometry_type"] == "point"
+        assert httpx.URL(bloco["source_url"]).params["geometryType"] == "esriGeometryPoint"
     else:
         assert "geometry" not in bloco["dimension_key"]
+
+    # Só a agregação de litoestratigrafia é derivada; as demais devolvem a
+    # fonte recortada e dizem isso (`derived: false`, sem nota).
+    if caso.tool == "get_lithology_by_area":
+        assert bloco["derived"] is True
+        assert "graus quadrados" in bloco["derivation_note"]
+        assert "não a área dentro do recorte" in bloco["derivation_note"]
+    else:
+        assert bloco["derived"] is False and bloco["derivation_note"] is None
 
 
 async def test_instructions_citam_cada_tool_publicada():
@@ -765,8 +901,11 @@ async def test_lista_de_substancias_concorrente_paga_uma_ida_so(portal):
          {"bbox_xmin": -47.5, "bbox_ymin": -20.5, "bbox_xmax": -46.0, "bbox_ymax": -19.0}),
         # Afloramentos tem teto de 1 grau²: o bbox "certo" é o de 1°×1°.
         ("get_geological_outcrops", OUTCROP_CHEIO, BBOX_1x1),
+        # Litoestratigrafia tem teto de 25 graus²: o bbox "certo" é o de 5°×5°.
+        ("get_lithology_by_area", LITO_CHEIO, BBOX_5x5),
     ],
-    ids=["search_mineral_occurrences", "search_rare_earth_occurrences", "get_geological_outcrops"],
+    ids=["search_mineral_occurrences", "search_rare_earth_occurrences",
+         "get_geological_outcrops", "get_lithology_by_area"],
 )
 async def test_bbox_incompleto_ou_invertido_e_recusado_antes_da_fonte(portal, tool, cenario, quatro):
     """Até 2026-09-17 três cantos e um vazio viravam "sem bbox" em silêncio
@@ -791,13 +930,20 @@ async def test_bbox_incompleto_ou_invertido_e_recusado_antes_da_fonte(portal, to
         certo = await cliente.call_tool(tool, {**quatro, "limit": 1})
         assert not certo.is_error, certo.content[0].text
         assert fonte.requisicoes[-1].url.params["geometry"] == geometria
-        # Sem bbox: afloramentos exige uf + municipality; as outras aceitam só uf.
-        sem_bbox = {"uf": "MG", "limit": 1}
-        if tool == "get_geological_outcrops":
-            sem_bbox["municipality"] = "Santa Bárbara"
+        # Sem bbox: afloramentos exige uf + municipality; litoestratigrafia
+        # exige um ponto (e então `geometry` é o ponto); as outras aceitam só uf.
+        if tool == "get_lithology_by_area":
+            sem_bbox = {**PONTO_BH, "limit": 1}
+        else:
+            sem_bbox = {"uf": "MG", "limit": 1}
+            if tool == "get_geological_outcrops":
+                sem_bbox["municipality"] = "Santa Bárbara"
         nenhum = await cliente.call_tool(tool, sem_bbox)
-        assert not nenhum.is_error
-        assert "geometry" not in fonte.requisicoes[-1].url.params
+        assert not nenhum.is_error, nenhum.content[0].text
+        if tool == "get_lithology_by_area":
+            assert fonte.requisicoes[-1].url.params["geometryType"] == "esriGeometryPoint"
+        else:
+            assert "geometry" not in fonte.requisicoes[-1].url.params
 
 
 async def test_rochas_relacionadas_e_opt_in(portal):
@@ -903,3 +1049,107 @@ def test_data_de_cadastro_converte_epoch_em_ms():
     assert outcrops_module.registered_at_iso(867369600000) == "1997-06-27"
     assert outcrops_module.registered_at_iso(0) == "1970-01-01"
     assert outcrops_module.registered_at_iso(None) is None
+
+
+# ---------------------------------------------------------------------------
+# Sessão 3 (2026-09-17, 0.7.0): litoestratigrafia — recorte obrigatório,
+# sem geometria, agregação no cliente
+# ---------------------------------------------------------------------------
+
+
+async def test_litoestratigrafia_exige_recorte_antes_da_fonte(portal):
+    """A camada tem 46.712 polígonos e a fonte não pagina: sem recorte a tool
+    baixaria o mapa inteiro. A recusa é na borda — sem nada, só lon, só lat,
+    bbox acima de 25 graus², ponto fora do globo, ou bbox E ponto juntos —
+    nomeando o que faltou, e o portal não é tocado."""
+    fonte = portal(LITO_CHEIO)
+    async with conectar() as cliente:
+        nada = await cliente.call_tool("get_lithology_by_area", {})
+        assert nada.is_error and "46.712" in nada.content[0].text
+        assert f"{LITHOLOGY_BBOX_MAX_DEG2:g} graus quadrados" in nada.content[0].text
+        so_lon = await cliente.call_tool("get_lithology_by_area", {"lon": -43.94})
+        assert so_lon.is_error and "faltou lat" in so_lon.content[0].text
+        so_lat = await cliente.call_tool("get_lithology_by_area", {"lat": -19.92})
+        assert so_lat.is_error and "faltou lon" in so_lat.content[0].text
+        fora = await cliente.call_tool("get_lithology_by_area", {"lon": -43.94, "lat": 95.0})
+        assert fora.is_error and "lat=95.0" in fora.content[0].text
+        # 6°×5° = 30 graus² (o teto é 25).
+        grande = await cliente.call_tool(
+            "get_lithology_by_area", {**BBOX_5x5, "bbox_xmin": -49.0},
+        )
+        assert grande.is_error, grande.content[0].text
+        assert "grande demais" in grande.content[0].text
+        assert "30 graus quadrados" in grande.content[0].text
+        assert f"teto é {LITHOLOGY_BBOX_MAX_DEG2:g}" in grande.content[0].text
+        assert "ponto" in grande.content[0].text
+        # Um fio acima do teto também recusa.
+        acima = await cliente.call_tool(
+            "get_lithology_by_area", {**BBOX_5x5, "bbox_xmax": BBOX_5x5["bbox_xmax"] + 0.01}
+        )
+        assert acima.is_error and "grande demais" in acima.content[0].text
+        juntos = await cliente.call_tool("get_lithology_by_area", {**BBOX_5x5, **PONTO_BH})
+        assert juntos.is_error and "não os dois" in juntos.content[0].text
+        assert fonte.requisicoes == [], "chamada sem recorte válido chegou ao portal"
+
+        no_teto = await cliente.call_tool("get_lithology_by_area", BBOX_5x5)
+        assert not no_teto.is_error, no_teto.content[0].text
+        ponto = await cliente.call_tool("get_lithology_by_area", PONTO_BH)
+        assert not ponto.is_error, ponto.content[0].text
+        assert len(fonte.requisicoes) == 2
+
+
+async def test_litoestratigrafia_uma_ida_sem_geometria_com_os_campos_da_resposta(portal):
+    """Uma requisição, `outFields` explícito (constants.LITHOLOGY_FIELDS, com
+    `SHAPE.AREA` e sem `LEGENDA`), `returnGeometry=false` SEMPRE (com
+    geometria o 1°×1° é 35× maior), sem `returnCountOnly`; por bbox manda
+    envelope, por ponto manda `esriGeometryPoint` com "lon,lat"."""
+    fonte = portal(LITO_CHEIO)
+    async with conectar() as cliente:
+        por_bbox = await cliente.call_tool("get_lithology_by_area", {**BBOX_5x5, "limit": 1})
+        por_ponto = await cliente.call_tool("get_lithology_by_area", PONTO_BH)
+    assert not por_bbox.is_error and not por_ponto.is_error
+    assert len(fonte.requisicoes) == 2
+    assert "SHAPE.AREA" in LITHOLOGY_FIELDS and "LEGENDA" not in LITHOLOGY_FIELDS
+    for requisicao in fonte.requisicoes:
+        params = requisicao.url.params
+        assert params["outFields"] == ",".join(LITHOLOGY_FIELDS)
+        assert params["returnGeometry"] == "false" and "returnCountOnly" not in params
+        assert params["where"] == "1=1"
+        assert params["spatialRel"] == "esriSpatialRelIntersects" and params["inSR"] == "4326"
+    envelope, ponto = (r.url.params for r in fonte.requisicoes)
+    assert envelope["geometryType"] == "esriGeometryEnvelope"
+    assert envelope["geometry"] == "-48.0,-23.0,-43.0,-18.0"
+    assert ponto["geometryType"] == "esriGeometryPoint"
+    assert ponto["geometry"] == "-43.94,-19.92"
+    # `limit` corta unidades, não polígonos: polygon_count segue 3.
+    assert por_bbox.structured_content["count"] == 1
+    assert por_bbox.structured_content["total_count"] == 2
+    assert por_bbox.structured_content["polygon_count"] == len(LITO_CHEIO.features)
+
+
+def test_agregacao_por_sigla():
+    """`aggregate_units` é a derivação que a proveniência declara: agrupa por
+    SIGLA, conta polígonos, soma SHAPE.AREA (nulos não somam; unidade sem
+    área nenhuma fica com area_deg2 nulo e vai ao fim), ordena por área
+    decrescente com desempate pela sigla, e não descarta polígono nenhum —
+    SIGLA nula agrega numa unidade de code nulo."""
+    sem_area = {"attributes": {**LITO_BAMBUI["attributes"], "SIGLA": "ZZZ", "SHAPE.AREA": None}}
+    unidades = lithology_module.aggregate_units(
+        [LITO_CAUE_1, LITO_MAGRO_POLIGONO, sem_area, LITO_BAMBUI, LITO_CAUE_2, LITO_MAGRO_POLIGONO]
+    )
+    assert [u["code"] for u in unidades] == ["NP3bsh", "A4PP1mic", "ZZZ", None]
+    assert [u["polygon_count"] for u in unidades] == [1, 2, 1, 2]
+    assert unidades[1]["area_deg2"] == pytest.approx(0.05)
+    assert unidades[2]["area_deg2"] is None and unidades[3]["area_deg2"] is None
+    assert sum(u["polygon_count"] for u in unidades) == 6
+    # Os atributos descritivos vêm do primeiro polígono da unidade.
+    assert unidades[1]["name"] == "Formação Cauê" and unidades[1]["system_max"] is None
+    assert set(unidades[0]) == {
+        "code", "name", "hierarchy", "parent_code", "parent_name", "lithotypes",
+        "age_min_ma", "age_max_ma", "eon_min", "eon_max", "era_min", "era_max",
+        "system_min", "system_max", "epoch_min", "epoch_max", "polygon_count", "area_deg2",
+    }
+    # Área parcialmente nula: soma só o que veio.
+    parcial = lithology_module.aggregate_units([LITO_CAUE_1, {"attributes": {**LITO_CAUE_1["attributes"], "SHAPE.AREA": None}}])
+    assert parcial[0]["polygon_count"] == 2 and parcial[0]["area_deg2"] == pytest.approx(0.02)
+    assert lithology_module.aggregate_units([]) == []
