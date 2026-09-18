@@ -11,6 +11,8 @@ from pydantic import ValidationError
 
 from geosgb_mcp.models import (
     Coordinates,
+    LithologySearchResult,
+    LithologyUnit,
     OccurrenceDetails,
     OccurrenceSearchResult,
     OccurrenceSummary,
@@ -36,6 +38,8 @@ MODELOS = [
     SubstanceList,
     OutcropSummary,
     OutcropSearchResult,
+    LithologyUnit,
+    LithologySearchResult,
     Provenance,
     ProvenanceSource,
     ProvenanceDataset,
@@ -107,11 +111,11 @@ def test_substance_list_so_strings():
 
 def test_toda_resposta_exige_proveniencia():
     """Desde 0.4.0 os quatro modelos de saída carregam `provenance` e
-    `attribution` (cinco desde 0.6.0, com afloramentos); resposta sem o
-    bloco não passa no próprio SDK."""
+    `attribution` (cinco desde 0.6.0, com afloramentos; seis desde 0.7.0,
+    com litoestratigrafia); resposta sem o bloco não passa no próprio SDK."""
     for modelo in (
         OccurrenceSearchResult, RareEarthSearchResult, OccurrenceDetails, SubstanceList,
-        OutcropSearchResult,
+        OutcropSearchResult, LithologySearchResult,
     ):
         assert modelo.model_fields["provenance"].annotation is Provenance, modelo.__name__
         assert modelo.model_fields["provenance"].is_required(), modelo.__name__
@@ -192,16 +196,88 @@ def test_bloco_de_proveniencia_obedece_ao_contrato():
     # Só camada registrada tem proveniência: tool nova sobre camada fora de
     # LAYERS falha aqui, não cita a camada errada. E toda camada servida está
     # em ENDPOINTS, sob o mesmo caminho — o contrato semanal vigia por lá.
-    # Servidas em 0.6.0: ocorrências e afloramentos (2026-09-17);
-    # litoestratigrafia_1m segue vigiada e sem tool.
+    # Servidas em 0.7.0: ocorrências, afloramentos e litoestratigrafia_1m
+    # (2026-09-17); litoestratigrafia_estados segue vigiada e sem tool
+    # (aponta para a raiz do serviço, uma camada por estado).
     from geosgb_mcp.constants import ENDPOINTS, LAYERS
 
-    with pytest.raises(ValueError, match="litoestratigrafia_1m.*constants.LAYERS"):
-        build_provenance("litoestratigrafia_1m", "1=1")
-    assert set(LAYERS) == {"ocorrencias", "afloramentos"}
+    with pytest.raises(ValueError, match="litoestratigrafia_estados.*constants.LAYERS"):
+        build_provenance("litoestratigrafia_estados", "1=1")
+    assert set(LAYERS) == {"ocorrencias", "afloramentos", "litoestratigrafia_1m"}
     for chave, camada in LAYERS.items():
         assert ENDPOINTS[chave] == camada.path, chave
         assert camada.name and camada.copyright_text and camada.verified_at, chave
+
+
+def test_bloco_de_proveniencia_por_ponto_e_derivado():
+    """Desde 0.7.0 (`get_lithology_by_area`) o bloco sabe dizer recorte por
+    PONTO e resposta DERIVADA. Ponto: `dimension_key.geometry` é "lon,lat" e
+    ganha `geometry_type: "point"`; a URL manda `esriGeometryPoint`. O
+    envelope segue sem `geometry_type` (o bloco de ocorrências acima é a
+    prova). `derived=True` exige nota e a nota só sai com `derived`; ponto e
+    envelope juntos é erro de programação."""
+    bloco = build_provenance(
+        "litoestratigrafia_1m", "1=1", point=(-43.94, -19.92),
+        retrieved_at="2026-09-17T12:00:00Z",
+        derived=True, derivation_note="agregado no cliente",
+    )
+    assert bloco["dimension_key"] == {
+        "where": "1=1", "geometry": "-43.94,-19.92", "geometry_type": "point",
+    }
+    assert bloco["source_url"] == (
+        "https://geoportal.sgb.gov.br/server/rest/services/geologia/litoestratigrafia_1000000"
+        "/MapServer/0/query?where=1%3D1&f=json&geometry=-43.94%2C-19.92"
+        "&geometryType=esriGeometryPoint&spatialRel=esriSpatialRelIntersects&inSR=4326"
+    )
+    assert bloco["dataset"]["name"] == "Unidades litoestratigráficas - 1:1.000.000 [2004]"
+    assert bloco["license"]["name"].startswith("Serviço Geológico do Brasil - CPRM")
+    assert bloco["derived"] is True and bloco["derivation_note"] == "agregado no cliente"
+    assert Provenance(**bloco).model_dump() == bloco
+
+    # Envelope: sem `geometry_type`, e as demais tools seguem não derivadas.
+    envelope = build_provenance("litoestratigrafia_1m", "1=1", (-44.5, -20.5, -43.5, -19.5))
+    assert envelope["dimension_key"] == {"where": "1=1", "geometry": "-44.5,-20.5,-43.5,-19.5"}
+    assert envelope["derived"] is False and envelope["derivation_note"] is None
+    # Nota sem `derived` não vaza.
+    assert build_provenance("ocorrencias", "1=1", derivation_note="x")["derivation_note"] is None
+
+    with pytest.raises(ValueError, match="derivation_note"):
+        build_provenance("litoestratigrafia_1m", "1=1", derived=True)
+    with pytest.raises(ValueError, match="exclusivos"):
+        build_provenance(
+            "litoestratigrafia_1m", "1=1", (-44.5, -20.5, -43.5, -19.5), point=(-44.0, -20.0)
+        )
+
+
+def test_lithology_result_tipa_as_unidades():
+    """O modelo de litoestratigrafia (0.7.0) segue a regra: tudo obrigatório
+    e anulável, salvo `polygon_count` (é contagem: um polígono no mínimo);
+    `code` É anulável (polígono com SIGLA nula agrega numa unidade sem
+    sigla, não some); `units` tipado; `polygon_count` no resultado."""
+    with pytest.raises(ValidationError, match="polygon_count"):
+        LithologyUnit(**_so_nulos(LithologyUnit))
+    magra = LithologyUnit(**_so_nulos(LithologyUnit, polygon_count=1))
+    assert magra.code is None and magra.area_deg2 is None and magra.age_min_ma is None
+    resultado = LithologySearchResult(
+        count=1, total_count=1, offset=0, polygon_count=3,
+        units=[_so_nulos(LithologyUnit, code="A34bh", polygon_count=3, area_deg2=0.5)],
+        provenance=build_provenance(
+            "litoestratigrafia_1m", "1=1", point=(-43.94, -19.92),
+            derived=True, derivation_note="agregado",
+        ),
+        attribution=[],
+    )
+    assert isinstance(resultado.units[0], LithologyUnit)
+    assert resultado.units[0].area_deg2 == 0.5
+    with pytest.raises(ValidationError, match="units"):
+        LithologySearchResult(
+            count=1, total_count=1, offset=0, polygon_count=1, units=[{"bogus": 1}],
+            provenance=PROV, attribution=[],
+        )
+    with pytest.raises(ValidationError, match="polygon_count"):
+        LithologySearchResult(
+            count=0, total_count=0, offset=0, units=[], provenance=PROV, attribution=[],
+        )
 
 
 def test_outcrop_result_tipa_as_features():

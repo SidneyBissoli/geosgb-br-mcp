@@ -95,6 +95,7 @@ class GeoSGBClient:
         geometry: tuple[float, float, float, float] | None = None,
         return_count_only: bool = False,
         f: str = "json",
+        point: tuple[float, float] | None = None,
     ) -> dict[str, Any]:
         """
         Executa query na ArcGIS REST API.
@@ -107,6 +108,10 @@ class GeoSGBClient:
             geometry: Bounding box (xmin, ymin, xmax, ymax) em WGS84
             return_count_only: Se True, retorna apenas contagem
             f: Formato de saída (json, geojson, pjson)
+            point: Ponto (lon, lat) em WGS84 — recorte por
+                `esriGeometryPoint` (desde 0.7.0, para a camada de polígonos
+                de litoestratigrafia: "que unidade está sob este ponto").
+                Exclusivo com `geometry`; quem chama garante isso.
 
         Returns:
             Dicionário com a resposta da API
@@ -137,10 +142,19 @@ class GeoSGBClient:
             params["returnGeometry"] = str(return_geometry).lower()
             params["outSR"] = "4326"
 
+        if geometry and point:
+            raise ValueError("query(): `geometry` (envelope) e `point` são exclusivos")
+
         if geometry:
             xmin, ymin, xmax, ymax = geometry
             params["geometry"] = f"{xmin},{ymin},{xmax},{ymax}"
             params["geometryType"] = "esriGeometryEnvelope"
+            params["spatialRel"] = "esriSpatialRelIntersects"
+            params["inSR"] = "4326"
+        elif point:
+            lon, lat = point
+            params["geometry"] = f"{lon},{lat}"
+            params["geometryType"] = "esriGeometryPoint"
             params["spatialRel"] = "esriSpatialRelIntersects"
             params["inSR"] = "4326"
 

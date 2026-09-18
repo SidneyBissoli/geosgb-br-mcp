@@ -67,7 +67,8 @@ class Layer:
 # filtro CORTA), 21 campos — servida por `get_geological_outcrops` desde
 # 0.6.0; `litoestratigrafia_1m` — "Unidades litoestratigráficas -
 # 1:1.000.000 [2004]", copyright "Serviço Geológico do Brasil - CPRM",
-# maxRecordCount 100.000, 30 campos, polígonos — entra quando tiver tool. Só
+# maxRecordCount 100.000 (46.712 polígonos: nada corta), 30 campos,
+# polígonos — servida por `get_lithology_by_area` desde 0.7.0. Só
 # ocorrências traz "SGB" no copyright. (`sedimento_corrente`, copyright
 # "Serviço Geológico do Brasil - CPRM", maxRecordCount 1.000, saiu — ver
 # ENDPOINTS.)
@@ -87,6 +88,16 @@ LAYERS: dict[str, Layer] = {
         # Serviço geologia/afloramentos/MapServer, currentVersion 11.3,
         # maxRecordCount 300.000 para 360.042 pontos: só a consulta SEM
         # filtro corta (`exceededTransferLimit`), e a tool não a permite.
+        verified_at="2026-09-17",
+    ),
+    "litoestratigrafia_1m": Layer(
+        path=ENDPOINTS["litoestratigrafia_1m"],
+        name="Unidades litoestratigráficas - 1:1.000.000 [2004]",
+        copyright_text="Serviço Geológico do Brasil - CPRM",
+        # Serviço geologia/litoestratigrafia_1000000/MapServer, currentVersion
+        # 11.3, polígonos, maxRecordCount 100.000 para 46.712 polígonos:
+        # nenhum recorte corta. SR do serviço 102100, `sourceSpatialReference`
+        # 4326 — `SHAPE.AREA` está em graus quadrados.
         verified_at="2026-09-17",
     ),
 }
@@ -149,6 +160,51 @@ OUTCROP_FIELDS = (
 # pela tool ponta a ponta o 1°×1° levou ~3,5 s). Um grau quadrado é o maior
 # recorte que fica abaixo de 10 mil pontos e de 5 MB no pior caso.
 OUTCROP_BBOX_MAX_DEG2 = 1.0
+
+# Campos que `get_lithology_by_area` pede à camada de litoestratigrafia
+# 1:1.000.000 (30 campos na fonte, 46.712 polígonos). SEM geometria sempre:
+# com ela o 1°×1° vira 6,4 MB (35×). Medido em 2026-09-17 num 1°×1° sobre o
+# Quadrilátero Ferrífero (311 polígonos, 60 unidades): estes 17 campos vêm
+# em 0,15 MB / 0,4 s; `LEGENDA` (texto de 2.000) subiria para 0,24 MB e `*`
+# para 0,34 MB — ficam fora, e na agregação por unidade não haveria "a"
+# legenda mesmo. `SHAPE.AREA` (nome com ponto) responde 200 em `outFields`
+# explícito; é a área do polígono INTEIRO em graus quadrados (fonte em
+# WGS84), não a parte dentro do recorte. Nulos no mesmo recorte: SIGLA_PAI e
+# NOME_PAI em 104 de 311, SISTEMA_MIN/EPOCA_MIN em 99, SISTEMA_MAX/EPOCA_MAX
+# em 171 — todos anuláveis. Os outros campos (OBJECTID, ID_UNIDADE_
+# ESTRATIGRAFICA, AMBIENTE_TECTONICO, SUB_AMBIENTE_TECTONICO, LEGENDA,
+# ESCALA, MAPA, RANGE, SIGLAS_HISTORICAS, GRUPO, SHAPE.LEN, RECORD_HASH)
+# não entram.
+LITHOLOGY_FIELDS = (
+    "SIGLA",
+    "HIERARQUIA",
+    "NOME",
+    "SIGLA_PAI",
+    "NOME_PAI",
+    "LITOTIPOS",
+    "IDADE_MIN",
+    "IDADE_MAX",
+    "EON_MIN",
+    "EON_MAX",
+    "ERA_MIN",
+    "ERA_MAX",
+    "SISTEMA_MIN",
+    "SISTEMA_MAX",
+    "EPOCA_MIN",
+    "EPOCA_MAX",
+    "SHAPE.AREA",
+)
+
+# Teto da área do bbox de `get_lithology_by_area`, em graus quadrados
+# (WGS84). A camada não corta (maxRecordCount 100.000 para 46.712
+# polígonos) e a agregação por unidade é no cliente (`groupBy SIGLA` com
+# bbox responde certo, mas em 140 s; `returnDistinctValues` com bbox dá
+# 400): o teto é o que segura a resposta. Medido em 2026-09-17, sem
+# geometria, 17 campos (httpx direto): 1°×1° = 311 polígonos / 60 unidades
+# / 0,15 MB / 0,4 s; 5°×5° = 4.614 / 293 / 2,2 MB / 3,4 s; 10°×10° =
+# 13.880 / 7,9 MB / 4,7 s. Vinte e cinco graus quadrados ficam abaixo de
+# 5 mil polígonos e de 3 MB.
+LITHOLOGY_BBOX_MAX_DEG2 = 25.0
 
 # Validade do cache em processo de `list_mineral_substances`, em segundos.
 # A lista nasce de baixar a camada inteira (36.484 registros só com
