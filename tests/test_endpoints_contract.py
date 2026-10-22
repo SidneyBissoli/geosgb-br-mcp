@@ -33,6 +33,17 @@ no corpo conta como tentativa falha (pausa e nova tentativa, até 3×); erro
 deriva que o contrato existe para pegar. Os testes `test_leitor_*` abaixo
 rodam OFFLINE (portal falso) e prendem essa distinção.
 
+2026-10-22 (item mcp:fonte-indisponivel-nao-e-deriva, peça 4): fonte fora
+≠ deriva. Quando as 3 tentativas se esgotam SÓ por soluço do portal (5xx no
+corpo, requisição que levanta — timeout, HTML de erro), o leitor lança
+`FonteIndisponivel` e o caso é PULADO, não reprovado: o job fica verde e o
+endpoint sai na anotação `::warning title=Fonte indisponível::a, b` (o mesmo
+contrato que os servidores TypeScript emitem pelo @sbissoli/mcp-live-source;
+o painel do portfólio conta as noites por endpoint e só abre item na 3ª).
+O que a fonte RESPONDEU — 4xx, nome trocado — segue reprovando: é a deriva.
+A anotação é escrita pelo `pytest_terminal_summary` de conftest.py (o
+stdout dos testes é capturado; o do terminal não).
+
 Roda só com INTEGRATION_TESTS=1 (o resto da suíte já é live, mas este é o
 único com propósito de vigília; cron semanal em .github/workflows/integration.yml).
 """
@@ -46,7 +57,13 @@ import pytest
 
 from geosgb_mcp.constants import BASE_URL, ENDPOINTS
 
+from .conftest import FONTE_INDISPONIVEL, TITULO_FONTE_INDISPONIVEL
+
 LIVE = os.environ.get("INTEGRATION_TESTS") in {"1", "true"}
+
+
+class FonteIndisponivel(Exception):
+    """O portal não entregou nada medível nas tentativas: deriva NÃO medida."""
 
 # Tentativas contra o portal e pausa entre elas. Três tentativas com 5 s
 # cobrem um soluço de segundos (o de 19/10 durou 3 s); indisponibilidade
@@ -95,7 +112,7 @@ def _layer_metadata(path: str) -> dict:
             last = f"portal respondeu erro {meta['error']}"
             continue
         return meta
-    raise AssertionError(
+    raise FonteIndisponivel(
         f"{path}: sem metadados JSON após {RETRIES} tentativas — {last}"
     )
 
@@ -160,11 +177,32 @@ def test_leitor_nao_retenta_erro_4xx(monkeypatch):
     assert reg["sleep"] == []
 
 
-def test_leitor_reprova_5xx_persistente(monkeypatch):
+def test_leitor_5xx_persistente_e_fonte_indisponivel_nao_deriva(monkeypatch):
+    # Esgotou as tentativas só com o portal tropeçando: não é AssertionError
+    # (deriva), é FonteIndisponivel — o caso vivo pula e anota.
     reg = _portal_falso(monkeypatch, [ERRO_500] * RETRIES)
-    with pytest.raises(AssertionError, match="3 tentativas.*500"):
+    with pytest.raises(FonteIndisponivel, match="3 tentativas.*500"):
         _layer_metadata("/x/MapServer/0")
     assert reg["urlopen"] == RETRIES
+
+
+def test_leitor_timeout_persistente_e_fonte_indisponivel(monkeypatch):
+    reg = _portal_falso(monkeypatch, [TimeoutError("timed out")] * RETRIES)
+    with pytest.raises(FonteIndisponivel, match="timed out"):
+        _layer_metadata("/x/MapServer/0")
+    assert reg["urlopen"] == RETRIES
+
+
+def test_anotacao_fonte_indisponivel_e_o_contrato_do_painel():
+    # Título FIXO e nomes separados por ", ": é o que o painel do portfólio
+    # lê em check-runs/{job}/annotations (o mesmo dos servidores TypeScript).
+    from .conftest import anotacao_fonte_indisponivel
+
+    assert (
+        anotacao_fonte_indisponivel(["afloramentos", "ocorrencias"])
+        == "::warning title=Fonte indisponível::afloramentos, ocorrencias"
+    )
+    assert TITULO_FONTE_INDISPONIVEL == "Fonte indisponível"
 
 
 def test_leitor_retenta_requisicao_que_levanta(monkeypatch):
@@ -184,8 +222,14 @@ def test_todo_endpoint_tem_expectativa():
 
 @pytest.mark.skipif(not LIVE, reason="INTEGRATION_TESTS não definido")
 @pytest.mark.parametrize("key,path", sorted(ENDPOINTS.items()))
-def test_endpoint_existe_e_e_o_que_promete(key: str, path: str):
-    meta = _layer_metadata(path)
+def test_endpoint_existe_e_e_o_que_promete(key: str, path: str, request):
+    try:
+        meta = _layer_metadata(path)
+    except FonteIndisponivel as exc:
+        # Fonte fora, não deriva: pulado (job verde) e anotado no fim da
+        # sessão pelo conftest, para o painel contar a noite.
+        request.config.stash[FONTE_INDISPONIVEL].append(key)
+        pytest.skip(f"{TITULO_FONTE_INDISPONIVEL}: {exc}")
     assert "error" not in meta, f"{key} ({path}): o geoportal respondeu erro {meta['error']}"
     # Camada tem "name"; raiz de serviço (caso litoestratigrafia_estados) não —
     # lá a identidade está na serviceDescription.
