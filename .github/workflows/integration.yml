@@ -39,13 +39,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Setup Python
-        uses: actions/setup-python@v7
+      # uv, e não actions/setup-python: no executor Windows o setup-python roda
+      # o setup.ps1 da versão baixada pelo powershell.exe, e a política de
+      # execução da máquina o recusa (1ª prova no desktop, 27/10/2026). O uv
+      # baixa um Python pronto, sem script de instalação, e cria o venv já
+      # ativado para os passos seguintes.
+      - name: Setup uv + Python
+        uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: '3.12'
+          activate-environment: true
 
       - name: Install package + pytest
-        run: pip install -e . pytest
+        run: uv pip install -e . pytest
 
       - name: Endpoints contract against live GeoSGB
         env:
