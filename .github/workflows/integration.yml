@@ -45,7 +45,7 @@ jobs:
       # baixa um Python pronto, sem script de instalação, e cria o venv já
       # ativado para os passos seguintes.
       - name: Setup uv + Python
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.3
         with:
           python-version: '3.12'
           activate-environment: true
