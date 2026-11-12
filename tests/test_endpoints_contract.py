@@ -249,6 +249,9 @@ def test_sessao_sem_medicao_sai_com_codigo_3(pytester, monkeypatch):
             request.config.stash[ENDPOINTS_MEDIDOS].append("c")
         """
     )
+    # A sessao filha escreve acentos; sem isto o Python do executor Windows usa
+    # cp1252 e o pytester, que le UTF-8, nao decodifica a saida.
+    monkeypatch.setenv("PYTHONUTF8", "1")
     fora = pytester.runpytest_subprocess()
     assert fora.ret == 3
     fora.stdout.fnmatch_lines(["::error title=Fonte inalcançável::*(2 indisponíveis)*"])

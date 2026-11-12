@@ -56,4 +56,8 @@ jobs:
       - name: Endpoints contract against live GeoSGB
         env:
           INTEGRATION_TESTS: '1'
+          # O executor e Windows: sem isto o Python escreve em cp1252 e as
+          # anotacoes com acento (Fonte indisponivel, Fonte inalcancavel)
+          # chegariam corrompidas ao GitHub, e o painel le o titulo exato.
+          PYTHONUTF8: '1'
         run: pytest tests/test_endpoints_contract.py -v
