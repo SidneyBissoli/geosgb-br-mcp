@@ -52,12 +52,13 @@ import json
 import os
 import time
 import urllib.request
+from pathlib import Path
 
 import pytest
 
 from geosgb_mcp.constants import BASE_URL, ENDPOINTS
 
-from .conftest import FONTE_INDISPONIVEL, TITULO_FONTE_INDISPONIVEL
+from .conftest import ENDPOINTS_MEDIDOS, FONTE_INDISPONIVEL, TITULO_FONTE_INDISPONIVEL
 
 LIVE = os.environ.get("INTEGRATION_TESTS") in {"1", "true"}
 
@@ -205,6 +206,58 @@ def test_anotacao_fonte_indisponivel_e_o_contrato_do_painel():
     assert TITULO_FONTE_INDISPONIVEL == "Fonte indisponível"
 
 
+def test_fonte_inalcancavel_so_quando_nada_foi_medido():
+    # A política do @sbissoli/mcp-live-source: nenhuma captura = erro
+    # rotulado e código 3; ao menos uma = verde com aviso.
+    from .conftest import (
+        CODIGO_FONTE_INALCANCAVEL,
+        anotacao_fonte_inalcancavel,
+        fonte_inalcancavel,
+    )
+
+    todos = ["afloramentos", "litoestratigrafia_1m", "litoestratigrafia_estados", "ocorrencias"]
+    assert fonte_inalcancavel(todos, [])
+    assert not fonte_inalcancavel(["afloramentos"], ["ocorrencias"])
+    assert not fonte_inalcancavel([], ["ocorrencias"])
+    assert not fonte_inalcancavel([], [])
+    assert anotacao_fonte_inalcancavel(todos) == (
+        "::error title=Fonte inalcançável::nenhuma captura respondeu "
+        "(4 indisponíveis); deriva NÃO medida — não é deriva de formato"
+    )
+    assert CODIGO_FONTE_INALCANCAVEL == 3
+
+
+def test_sessao_sem_medicao_sai_com_codigo_3(pytester, monkeypatch):
+    # A sessão inteira, num pytest filho: todo endpoint pulado como fonte
+    # indisponível troca a saída verde por 3 e escreve a anotação de erro;
+    # com um endpoint medido, segue verde com o aviso.
+    pytester.makeconftest(Path(__file__).with_name("conftest.py").read_text(encoding="utf-8"))
+    pytester.makepyfile(
+        test_vivo="""
+        import pytest
+        from conftest import ENDPOINTS_MEDIDOS, FONTE_INDISPONIVEL
+
+        @pytest.mark.parametrize("key", ["a", "b"])
+        def test_fora(key, request):
+            request.config.stash[FONTE_INDISPONIVEL].append(key)
+            pytest.skip("fora")
+
+        def test_medido(request):
+            import os
+            if os.environ.get("UM_MEDIDO") != "1":
+                pytest.skip("sem medição nesta sessão")
+            request.config.stash[ENDPOINTS_MEDIDOS].append("c")
+        """
+    )
+    fora = pytester.runpytest_subprocess()
+    assert fora.ret == 3
+    fora.stdout.fnmatch_lines(["::error title=Fonte inalcançável::*(2 indisponíveis)*"])
+    monkeypatch.setenv("UM_MEDIDO", "1")
+    parcial = pytester.runpytest_subprocess()
+    assert parcial.ret == 0
+    parcial.stdout.fnmatch_lines(["::warning title=Fonte indisponível::a, b"])
+
+
 def test_leitor_retenta_requisicao_que_levanta(monkeypatch):
     # Comportamento anterior preservado: HTML de erro / timeout seguem
     # contando como tentativa falha.
@@ -230,6 +283,9 @@ def test_endpoint_existe_e_e_o_que_promete(key: str, path: str, request):
         # sessão pelo conftest, para o painel contar a noite.
         request.config.stash[FONTE_INDISPONIVEL].append(key)
         pytest.skip(f"{TITULO_FONTE_INDISPONIVEL}: {exc}")
+    # O portal respondeu algo medível: a sessão mediu a fonte, passe ou não
+    # a asserção abaixo (deriva também é medição).
+    request.config.stash[ENDPOINTS_MEDIDOS].append(key)
     assert "error" not in meta, f"{key} ({path}): o geoportal respondeu erro {meta['error']}"
     # Camada tem "name"; raiz de serviço (caso litoestratigrafia_estados) não —
     # lá a identidade está na serviceDescription.
